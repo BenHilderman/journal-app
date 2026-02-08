@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClearMindAI — Developer Growth Journal</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- Auth Screen -->
+    <div id="authScreen" class="screen active">
+      <div class="auth-container">
+        <div class="logo">
+          <div class="logo-icon">🧠</div>
+          <h1>ClearMindAI</h1>
+          <p class="tagline">Your dev journey, clarified</p>
+        </div>
+        <div class="typing-demo" id="typingDemo"></div>
+        <form id="authForm" class="auth-form">
+          <input type="text" id="authName" placeholder="Name (signup only)" autocomplete="name">
+          <input type="email" id="authEmail" placeholder="Email" required autocomplete="email">
+          <input type="password" id="authPassword" placeholder="Password" required autocomplete="current-password">
+          <button type="submit" id="authSubmit" class="btn btn-primary">Sign In</button>
+          <p class="auth-toggle">
+            <span id="authToggleText">Don't have an account?</span>
+            <a href="#" id="authToggle">Sign Up</a>
+          </p>
+          <p id="authError" class="error-text"></p>
+        </form>
+      </div>
+    </div>
+
+    <!-- Main App Screen -->
+    <div id="mainScreen" class="screen">
+      <header class="app-header">
+        <div class="header-left">
+          <span class="logo-small">🧠</span>
+          <h2>ClearMindAI</h2>
+        </div>
+        <div class="header-right">
+          <span id="userName"></span>
+          <button id="signOutBtn" class="btn btn-ghost">Sign Out</button>
+        </div>
+      </header>
+
+      <!-- Navigation -->
+      <nav class="app-nav">
+        <button class="nav-btn active" data-view="journal">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+          </svg>
+          Journal
+        </button>
+        <button class="nav-btn" data-view="entries">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+          Entries
+        </button>
+        <button class="nav-btn" data-view="search">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+          </svg>
+          Search
+        </button>
+        <button class="nav-btn" data-view="recap">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+          Weekly Recap
+        </button>
+        <button class="nav-btn" data-view="insights">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          Insights
+        </button>
+      </nav>
+
+      <!-- Views -->
+      <main class="app-main">
+
+        <!-- Journal View -->
+        <section id="journalView" class="view active">
+          <div class="editor-container">
+            <input type="text" id="entryTitle" class="entry-title-input" placeholder="Entry title (optional)">
+            <textarea id="entryContent" class="entry-editor" placeholder="What happened in your dev world today? Bugs squashed, concepts clicked, blockers hit..."></textarea>
+            <div class="editor-actions">
+              <button id="saveEntryBtn" class="btn btn-primary">Save Entry</button>
+              <button id="analyzeBtn" class="btn btn-secondary">🤖 Analyze</button>
+              <button id="clarityBtn" class="btn btn-secondary">💡 Clarity Questions</button>
+              <button id="reflectBtn" class="btn btn-secondary">🔗 RAG Reflect</button>
+            </div>
+          </div>
+          <div id="aiResults" class="ai-results"></div>
+        </section>
+
+        <!-- Entries View -->
+        <section id="entriesView" class="view">
+          <div id="entriesList" class="entries-list">
+            <p class="empty-state">Loading entries...</p>
+          </div>
+        </section>
+
+        <!-- Search View -->
+        <section id="searchView" class="view">
+          <div class="search-container">
+            <div class="search-input-group">
+              <input type="text" id="searchInput" placeholder="Search your journal entries semantically..." class="search-input">
+              <button id="searchBtn" class="btn btn-primary">Search</button>
+            </div>
+          </div>
+          <div id="searchResults" class="search-results"></div>
+        </section>
+
+        <!-- Weekly Recap View -->
+        <section id="recapView" class="view">
+          <div class="recap-header">
+            <h3>Weekly Recap</h3>
+            <button id="generateRecapBtn" class="btn btn-primary">Generate Recap</button>
+          </div>
+          <div id="recapResults" class="recap-results"></div>
+        </section>
+
+        <!-- Insights View -->
+        <section id="insightsView" class="view">
+          <div class="insights-header">
+            <h3>Developer Insights</h3>
+            <button id="generateInsightsBtn" class="btn btn-primary">Generate Insights</button>
+          </div>
+          <div class="insights-content">
+            <div class="insight-section">
+              <h4>Mood Over Time</h4>
+              <div id="moodChart" class="mood-chart">
+                <p class="empty-state">Click "Generate Insights" to see your mood trends</p>
+              </div>
+            </div>
+            <div class="insight-section">
+              <h4>Growth Patterns</h4>
+              <div id="growthResults" class="growth-results">
+                <p class="empty-state">Click "Generate Insights" to detect growth patterns</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
