@@ -4,17 +4,6 @@ AI-powered developer growth journal. Write about your day, get insights back.
 
 Built with Express.js, vanilla JS, and the Groq API. No frontend frameworks, no database server, no build step.
 
-## Features
-
-- Journal entries — full CRUD, nothing fancy
-- AI analysis — mood detection, tagging, summaries via Groq (Llama 3.1)
-- Clarity questions — reflection prompts based on what you wrote
-- Semantic search — find entries by meaning using trigram embeddings
-- RAG reflections — AI connects your current entry to past ones
-- Weekly recaps — automated summary of your week
-- Mood trends — SVG line chart of your mood over time (hand-rolled, no chart library)
-- Growth patterns — AI surfaces what you're improving at, what you're ignoring
-
 ## Tech
 
 | | |
