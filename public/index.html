@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClearMindAI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <svg class="paper-grain-svg" aria-hidden="true">
+    <filter id="paperGrain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+    </filter>
+    <rect width="100%" height="100%" filter="url(#paperGrain)"/>
+  </svg>
+  <div id="app">
+
+    <!-- Auth Screen -->
+    <div id="authScreen" class="screen active">
+      <div class="auth-orbs">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+      </div>
+      <div class="auth-container">
+        <div class="logo">
+          <div class="logo-mark">
+            <span class="logo-brain">🧠</span>
+          </div>
+          <h1>ClearMind<span class="logo-ai">AI</span></h1>
+          <p class="tagline">Your thoughts, clarified.</p>
+        </div>
+        <div class="typing-demo" id="typingDemo"></div>
+        <form id="authForm" class="auth-form">
+          <input type="text" id="authName" placeholder="Full name" autocomplete="name">
+          <input type="email" id="authEmail" placeholder="Email address" required autocomplete="email">
+          <input type="password" id="authPassword" placeholder="Password" required autocomplete="current-password">
+          <button type="submit" id="authSubmit" class="btn btn-primary btn-full">Sign In</button>
+          <p class="auth-toggle">
+            <span id="authToggleText">Don't have an account?</span>
+            <a href="#" id="authToggle">Sign Up</a>
+          </p>
+          <p id="authError" class="error-text"></p>
+        </form>
+      </div>
+    </div>
+
+    <!-- Main App Screen -->
+    <div id="mainScreen" class="screen">
+      <div class="app-orbs">
+        <div class="orb orb-app-1"></div>
+        <div class="orb orb-app-2"></div>
+      </div>
+
+      <header class="app-header">
+        <div class="header-left">
+          <span class="header-brain">🧠</span>
+          <span class="header-title">ClearMind<span class="logo-ai">AI</span></span>
+        </div>
+        <div class="header-right">
+          <button id="coachToggle" class="btn btn-ghost btn-sm coach-toggle" title="AI Coach">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            Coach
+          </button>
+          <button id="apiKeyHeaderBtn" class="btn btn-ghost btn-sm" style="display:none;" title="Configure API Key">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+            </svg>
+            API Key
+          </button>
+          <span id="userName"></span>
+          <button id="signOutBtn" class="btn btn-ghost btn-sm">Sign Out</button>
+        </div>
+      </header>
+
+      <!-- api key setup lives in the modal overlay at bottom of page -->
+
+      <nav class="app-nav">
+        <div class="nav-inner">
+          <div class="nav-indicator"></div>
+          <button class="nav-btn active" data-view="journal">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+            Write
+          </button>
+          <button class="nav-btn" data-view="entries">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+            Entries
+          </button>
+          <button class="nav-btn" data-view="search">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+            </svg>
+            Search
+          </button>
+          <button class="nav-btn" data-view="recap">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            Recap
+          </button>
+          <button class="nav-btn" data-view="insights">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+            Insights
+          </button>
+        </div>
+      </nav>
+
+      <main class="app-main">
+
+        <!-- Journal View -->
+        <section id="journalView" class="view active">
+          <div class="editor-container">
+            <input type="text" id="entryTitle" class="entry-title-input" placeholder="Title (optional)">
+            <div class="editor-wrap">
+              <textarea id="entryContent" class="entry-editor" placeholder="What's on your mind today?"></textarea>
+            </div>
+            <div class="editor-actions">
+              <button id="saveEntryBtn" class="btn btn-primary">Save</button>
+              <button id="micBtn" class="btn btn-mic" title="Voice journal">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="23"/>
+                  <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+                Voice
+              </button>
+              <div class="action-divider"></div>
+              <button id="analyzeBtn" class="btn btn-subtle">Analyze</button>
+              <button id="clarityBtn" class="btn btn-subtle">Clarity</button>
+              <button id="reflectBtn" class="btn btn-subtle">Reflect</button>
+            </div>
+            <div id="voiceStatus"></div>
+          </div>
+          <div id="writingPrompts" class="writing-prompts"></div>
+          <div id="aiResults" class="ai-results"></div>
+        </section>
+
+        <!-- Entries View -->
+        <section id="entriesView" class="view">
+          <div class="bookshelf-header">
+            <div class="journal-icon-wrap">
+              <svg class="journal-icon" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <!-- notebook -->
+                <rect class="journal-cover" x="16" y="10" width="44" height="56" rx="4" fill="var(--surface)" stroke="var(--brown)" stroke-width="2"/>
+                <rect class="journal-spine" x="16" y="10" width="8" height="56" rx="2" fill="var(--brown)" opacity="0.15"/>
+                <line x1="28" y1="24" x2="52" y2="24" stroke="var(--text-3)" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+                <line x1="28" y1="32" x2="48" y2="32" stroke="var(--text-3)" stroke-width="1.5" stroke-linecap="round" opacity="0.25"/>
+                <line x1="28" y1="40" x2="50" y2="40" stroke="var(--text-3)" stroke-width="1.5" stroke-linecap="round" opacity="0.2"/>
+                <line x1="28" y1="48" x2="44" y2="48" stroke="var(--text-3)" stroke-width="1.5" stroke-linecap="round" opacity="0.15"/>
+                <!-- binding rings -->
+                <circle cx="20" cy="22" r="2" fill="none" stroke="var(--brown)" stroke-width="1.2" opacity="0.4"/>
+                <circle cx="20" cy="38" r="2" fill="none" stroke="var(--brown)" stroke-width="1.2" opacity="0.4"/>
+                <circle cx="20" cy="54" r="2" fill="none" stroke="var(--brown)" stroke-width="1.2" opacity="0.4"/>
+                <!-- pen -->
+                <g class="journal-pen">
+                  <line x1="52" y1="18" x2="66" y2="4" stroke="var(--brown)" stroke-width="2.5" stroke-linecap="round"/>
+                  <polygon points="51,20 53,14 56,17" fill="var(--brown)" opacity="0.8"/>
+                  <line x1="64" y1="6" x2="68" y2="2" stroke="var(--brown-hover)" stroke-width="2" stroke-linecap="round"/>
+                </g>
+              </svg>
+            </div>
+            <h3>Your Journal</h3>
+          </div>
+          <div id="entriesList" class="entries-list">
+            <p class="empty-state">Loading entries...</p>
+          </div>
+        </section>
+
+        <!-- Search View -->
+        <section id="searchView" class="view">
+          <div class="section-header">
+            <div>
+              <h3>Semantic Search</h3>
+              <p class="section-sub">Find entries by meaning, not just keywords</p>
+            </div>
+          </div>
+          <div class="search-container">
+            <div class="search-input-group">
+              <input type="text" id="searchInput" placeholder="Search by meaning..." class="search-input">
+              <button id="searchBtn" class="btn btn-primary">Search</button>
+            </div>
+          </div>
+          <div id="searchResults" class="search-results"></div>
+        </section>
+
+        <!-- Weekly Recap View -->
+        <section id="recapView" class="view">
+          <div class="section-header">
+            <div>
+              <h3>Weekly Recap</h3>
+              <p class="section-sub">AI summary of your development week</p>
+            </div>
+            <button id="generateRecapBtn" class="btn btn-primary">Generate</button>
+          </div>
+          <div id="recapResults" class="recap-results"></div>
+        </section>
+
+        <!-- Insights View -->
+        <section id="insightsView" class="view">
+          <div class="section-header">
+            <div>
+              <h3>Insights</h3>
+              <p class="section-sub">Mood trends and growth patterns across your journal</p>
+            </div>
+            <button id="generateInsightsBtn" class="btn btn-primary">Generate</button>
+          </div>
+          <div class="insights-content">
+            <div class="insight-section">
+              <h4>Mood Over Time</h4>
+              <div id="moodChart" class="mood-chart">
+                <div class="empty-state-animated"><span class="empty-state-icon">📊</span><div class="empty-state-text">Generate insights to see your mood trends</div></div>
+              </div>
+            </div>
+            <div class="insight-section">
+              <h4>Growth Patterns</h4>
+              <div id="growthResults" class="growth-results">
+                <div class="empty-state-animated"><span class="empty-state-icon">🌱</span><div class="empty-state-text">Generate insights to detect growth patterns</div></div>
+              </div>
+            </div>
+            <div class="insight-section">
+              <h4>Time Capsule</h4>
+              <div class="capsule-controls">
+                <select id="capsulePeriod" class="capsule-select">
+                  <option value="7">1 week ago</option>
+                  <option value="30" selected>1 month ago</option>
+                  <option value="90">3 months ago</option>
+                </select>
+                <button id="generateTimeCapsuleBtn" class="btn btn-primary btn-sm">Compare</button>
+              </div>
+              <div id="timeCapsuleResults" class="capsule-results">
+                <div class="empty-state-animated"><span class="empty-state-icon">🕰</span><div class="empty-state-text">Compare your past and present self</div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+
+      <aside id="coachPanel" class="coach-panel">
+        <div class="coach-header">
+          <h3>AI Coach <span class="coach-ai-badge">AI</span></h3>
+          <button id="coachClose" class="btn btn-ghost btn-sm">✕</button>
+        </div>
+        <div id="coachMessages" class="coach-messages"></div>
+        <div class="coach-input-area">
+          <input type="text" id="coachInput" class="coach-input" placeholder="Ask your coach anything...">
+          <button id="coachSendBtn" class="btn btn-primary btn-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- API key setup modal — pops up when user clicks "Set up" or header button -->
+  <div id="apiKeyOverlay" class="api-overlay" style="display:none;">
+    <div class="api-modal">
+      <div class="api-modal-header">
+        <h3>Connect to Groq</h3>
+        <button id="apiModalClose" class="btn btn-ghost btn-sm">✕</button>
+      </div>
+      <p class="api-modal-desc">ClearMindAI uses <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Groq's free API</a> to power all AI features — analysis, coaching, insights, and more.</p>
+      <ol class="api-steps">
+        <li>Go to <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">console.groq.com/keys</a></li>
+        <li>Create a free account (if you don't have one)</li>
+        <li>Generate an API key and paste it below</li>
+      </ol>
+      <div class="api-modal-form">
+        <input type="password" id="apiKeyInput" placeholder="gsk_..." class="api-key-input">
+        <button id="apiKeySaveBtn" class="btn btn-primary">Save Key</button>
+      </div>
+      <p id="apiKeyError" class="error-text" style="margin-top:8px;"></p>
+      <button id="apiKeySkip" class="btn btn-ghost btn-sm api-skip-btn">Continue without AI features</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
