@@ -364,7 +364,7 @@ body::after {
   font-size: 1rem;
   font-family: var(--font);
   box-shadow: var(--shadow-sm);
-  transition: all 0.4s var(--ease);
+  transition: transform 0.4s var(--ease), box-shadow 0.4s var(--ease), border-color 0.4s var(--ease);
 }
 
 .auth-form input:focus {
