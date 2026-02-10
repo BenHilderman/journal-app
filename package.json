@@ -1,7 +1,7 @@
 {
   "name": "clearmind-ai",
   "version": "1.0.0",
-  "description": "AI-powered developer growth journal — your dev journey, clarified",
+  "description": "AI-powered personal growth journal — your thoughts, clarified",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -9,16 +9,24 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "keywords": ["ai", "journal", "developer", "growth", "groq", "llm"],
+  "keywords": [
+    "ai",
+    "journal",
+    "personal-growth",
+    "groq",
+    "llm"
+  ],
   "license": "MIT",
   "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^10.0.0",
     "express": "^4.21.0",
     "express-session": "^1.18.0",
-    "bcryptjs": "^2.4.3",
-    "groq-sdk": "^0.8.0"
+    "groq-sdk": "^0.8.0",
+    "pg": "^8.18.0"
   },
   "devDependencies": {
-    "vitest": "^3.0.0",
-    "supertest": "^7.0.0"
+    "supertest": "^7.0.0",
+    "vitest": "^3.0.0"
   }
 }

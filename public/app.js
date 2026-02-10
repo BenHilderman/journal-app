@@ -69,14 +69,14 @@ function showStreamingResult() {
 // mood detection — scans text for keywords to guess how you're feeling
 
 const MOOD_KEYWORDS = {
-  excited: ['shipped', 'launch', 'released', 'production', 'deployed', 'awesome', 'amazing', 'breakthrough', 'nailed', 'crushed'],
+  excited: ['aced', 'passed', 'accepted', 'graduated', 'launch', 'released', 'awesome', 'amazing', 'breakthrough', 'nailed', 'crushed'],
   confident: ['confident', 'solid', 'strong', 'ready', 'prepared', 'capable', 'skilled', 'mastered'],
   happy: ['happy', 'great', 'good', 'enjoy', 'love', 'fun', 'pleased', 'glad', 'nice', 'wonderful'],
   focused: ['focused', 'deep work', 'flow', 'zone', 'productive', 'grinding', 'heads down', 'locked in'],
   calm: ['calm', 'peaceful', 'relaxed', 'steady', 'balanced', 'content', 'quiet'],
   curious: ['curious', 'exploring', 'researching', 'wondering', 'interesting', 'learning', 'discovered', 'investigated'],
   anxious: ['anxious', 'worried', 'nervous', 'deadline', 'pressure', 'stress', 'overwhelm', 'behind'],
-  frustrated: ['frustrated', 'stuck', 'broken', 'bug', 'annoying', 'struggling', 'impossible', 'hate', 'ugh', 'terrible'],
+  frustrated: ['frustrated', 'stuck', 'broken', 'assignment', 'midterm', 'rejection', 'annoying', 'struggling', 'impossible', 'hate', 'ugh', 'terrible'],
   tired: ['tired', 'exhausted', 'drained', 'burnout', 'long day', 'burned out', 'fatigued', 'sleepy'],
   uncertain: ['uncertain', 'confused', 'unclear', 'unsure', 'doubt', 'maybe', 'not sure', 'lost'],
 };
@@ -359,11 +359,6 @@ function requireApiKey() {
       hasApiKey = false;
     }
     updateAIButtonStates();
-
-    // if no key, show the modal right away after login
-    if (!hasApiKey) {
-      openApiKeyModal();
-    }
   }
 
   saveBtn.addEventListener('click', async () => {
@@ -1137,34 +1132,7 @@ entryContent.addEventListener('change', updateSaveGlow);
   });
 })();
 
-// live character count below the editor
-
-(function initCharCount() {
-  const counter = document.createElement('div');
-  counter.className = 'char-counter';
-  counter.textContent = '0';
-  const editorContainer = document.querySelector('.editor-container');
-  if (!editorContainer) return;
-  // insert after editor-wrap
-  const editorWrapEl = editorContainer.querySelector('.editor-wrap');
-  if (editorWrapEl && editorWrapEl.nextSibling) {
-    editorContainer.insertBefore(counter, editorWrapEl.nextSibling);
-  } else {
-    editorContainer.appendChild(counter);
-  }
-
-  entryContent.addEventListener('input', () => {
-    const len = entryContent.value.length;
-    counter.textContent = len.toLocaleString();
-    counter.classList.toggle('active', len > 0);
-
-    // milestone pulse
-    if (len === 100 || len === 500 || len === 1000) {
-      counter.classList.add('milestone');
-      setTimeout(() => counter.classList.remove('milestone'), 600);
-    }
-  });
-})();
+// character count removed — felt cluttery
 
 // toast notifications
 

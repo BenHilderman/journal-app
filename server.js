@@ -1,13 +1,21 @@
-// ClearMindAI server — Express backend for a developer journaling app
+// ClearMindAI server — Express backend for a personal growth journaling app
 // with AI-powered analysis, coaching, and growth tracking via Groq LLMs
 
 import express from 'express';
 import session from 'express-session';
+import connectPgSimple from 'connect-pg-simple';
 import bcrypt from 'bcryptjs';
 import Groq from 'groq-sdk';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  getPool, initDB,
+  findUserByEmail, createUser, findUserById, setUserApiKey, getUserApiKey,
+  createEntry as dbCreateEntry, getEntries as dbGetEntries, getEntryById as dbGetEntryById,
+  updateEntry as dbUpdateEntry, deleteEntry as dbDeleteEntry,
+  getEntriesWithEmbeddings, getEntriesInDateRange, getAnalyzedEntries,
+  updateEntryAnalysis,
+} from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,38 +23,14 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// reads env each call so tests can swap dirs between runs
-function getDataDir() {
-  const dir = process.env.DATA_DIR || path.join(__dirname, 'data');
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
-
-// groq client — reinitializable when user provides their own key
-let groq = new Groq({ apiKey: process.env.GROQ_API_KEY || '' });
-
-function getConfigFile() {
-  return path.join(getDataDir(), 'config.json');
-}
-
-function loadConfig() {
-  try {
-    const file = getConfigFile();
-    if (fs.existsSync(file)) {
-      return JSON.parse(fs.readFileSync(file, 'utf-8'));
-    }
-  } catch {}
-  return {};
-}
-
-function saveConfig(config) {
-  fs.writeFileSync(getConfigFile(), JSON.stringify(config, null, 2));
+// Per-request Groq client using the calling user's API key
+function makeGroqClient(apiKey) {
+  return new Groq({ apiKey: apiKey || '' });
 }
 
 // swappable for tests since groq-sdk has its own http client
 let _groqChat = async (messages, options = {}) => {
+  const groq = makeGroqClient(options._apiKey);
   const completion = await groq.chat.completions.create({
     model: options.model || 'llama-3.1-8b-instant',
     messages,
@@ -62,6 +46,7 @@ export function setGroqChat(fn) {
 
 // streaming version of groqChat — yields tokens one at a time
 let _groqChatStream = async function* (messages, options = {}) {
+  const groq = makeGroqClient(options._apiKey);
   const stream = await groq.chat.completions.create({
     model: options.model || 'llama-3.1-8b-instant',
     messages,
@@ -83,6 +68,12 @@ export async function* groqChatStream(messages, options = {}) {
   yield* _groqChatStream(messages, options);
 }
 
+// resolves the API key for the current request (per-user BYOK or env fallback)
+async function resolveApiKey(userId) {
+  const userKey = await getUserApiKey(userId);
+  return userKey || process.env.GROQ_API_KEY || '';
+}
+
 // sets up server-sent events for real-time streaming
 function initSSE(res) {
   res.writeHead(200, {
@@ -98,39 +89,34 @@ function initSSE(res) {
   };
 }
 
+// trust proxy in production (Render terminates TLS at load balancer)
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(session({
+
+// session store — Postgres-backed in production, memory in dev/test
+const sessionConfig = {
   secret: process.env.SESSION_SECRET || 'clearmind-dev-secret-change-in-prod',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 }
-}));
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  },
+};
 
-// helper functions
-
-function getUsersFile() {
-  return path.join(getDataDir(), 'users.json');
+if (process.env.DATABASE_URL && process.env.NODE_ENV !== 'test') {
+  const PgSession = connectPgSimple(session);
+  sessionConfig.store = new PgSession({
+    pool: getPool(),
+    createTableIfMissing: true,
+  });
 }
 
-function getEntriesFile(userId) {
-  return path.join(getDataDir(), `entries_${userId}.json`);
-}
-
-function loadJSON(filepath) {
-  try {
-    if (fs.existsSync(filepath)) {
-      return JSON.parse(fs.readFileSync(filepath, 'utf-8'));
-    }
-  } catch (e) {
-    console.error(`Error loading ${filepath}:`, e.message);
-  }
-  return [];
-}
-
-function saveJSON(filepath, data) {
-  fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
-}
+app.use(session(sessionConfig));
 
 /*
  * Poor man's text embeddings — we hash character trigrams into a fixed-size
@@ -209,6 +195,9 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// health check for Render
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
 // authentication
 
 app.post('/api/auth/signup', async (req, res) => {
@@ -222,27 +211,22 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const users = loadJSON(getUsersFile());
-    if (users.find(u => u.email === email)) {
+    const existing = await findUserByEmail(email);
+    if (existing) {
       return res.status(400).json({ error: 'Email already exists' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = {
-      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+    const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    const user = await createUser({
+      id,
       email,
       name: name || email.split('@')[0],
       password: hashedPassword,
-      createdAt: new Date().toISOString()
-    };
-
-    users.push(user);
-    saveJSON(getUsersFile(), users);
-    saveJSON(getEntriesFile(user.id), []);
+    });
 
     req.session.userId = user.id;
-    const { password: _, ...safeUser } = user;
-    res.json({ user: safeUser });
+    res.json({ user: { id: user.id, email: user.email, name: user.name, createdAt: user.created_at } });
   } catch (error) {
     console.error('Signup error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -252,31 +236,27 @@ app.post('/api/auth/signup', async (req, res) => {
 app.post('/api/auth/signin', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const users = loadJSON(getUsersFile());
-    const user = users.find(u => u.email === email);
+    const user = await findUserByEmail(email);
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     req.session.userId = user.id;
-    const { password: _, ...safeUser } = user;
-    res.json({ user: safeUser });
+    res.json({ user: { id: user.id, email: user.email, name: user.name, createdAt: user.created_at } });
   } catch (error) {
     console.error('Signin error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-app.get('/api/auth/me', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
   if (!req.session.userId) {
     return res.json({ user: null });
   }
-  const users = loadJSON(getUsersFile());
-  const user = users.find(u => u.id === req.session.userId);
+  const user = await findUserById(req.session.userId);
   if (!user) return res.json({ user: null });
-  const { password: _, ...safeUser } = user;
-  res.json({ user: safeUser });
+  res.json({ user: { id: user.id, email: user.email, name: user.name, createdAt: user.created_at } });
 });
 
 app.post('/api/auth/signout', (req, res) => {
@@ -286,25 +266,22 @@ app.post('/api/auth/signout', (req, res) => {
 
 // journal entries crud
 
-app.post('/api/entries', requireAuth, (req, res) => {
+app.post('/api/entries', requireAuth, async (req, res) => {
   try {
     const { content, title } = req.body;
     if (!content || !content.trim()) {
       return res.status(400).json({ error: 'Content is required' });
     }
 
-    const entries = loadJSON(getEntriesFile(req.session.userId));
-    const entry = {
-      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+    const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    const entry = await dbCreateEntry({
+      id,
+      userId: req.session.userId,
       title: title || 'Untitled Entry',
       content: content.trim(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      embedding: getEmbedding(content)
-    };
+      embedding: getEmbedding(content),
+    });
 
-    entries.push(entry);
-    saveJSON(getEntriesFile(req.session.userId), entries);
     res.json({ entry });
   } catch (error) {
     console.error('Create entry error:', error);
@@ -312,63 +289,50 @@ app.post('/api/entries', requireAuth, (req, res) => {
   }
 });
 
-app.get('/api/entries', requireAuth, (req, res) => {
+app.get('/api/entries', requireAuth, async (req, res) => {
   try {
-    const entries = loadJSON(getEntriesFile(req.session.userId));
-    entries.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    // strip embeddings from response, they're huge
-    const clean = entries.map(({ embedding, ...rest }) => rest);
-    res.json({ entries: clean });
+    const entries = await dbGetEntries(req.session.userId);
+    res.json({ entries });
   } catch (error) {
     console.error('Get entries error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-app.get('/api/entries/:id', requireAuth, (req, res) => {
+app.get('/api/entries/:id', requireAuth, async (req, res) => {
   try {
-    const entries = loadJSON(getEntriesFile(req.session.userId));
-    const entry = entries.find(e => e.id === req.params.id);
+    const entry = await dbGetEntryById(req.session.userId, req.params.id);
     if (!entry) return res.status(404).json({ error: 'Entry not found' });
-    const { embedding, ...clean } = entry;
-    res.json({ entry: clean });
+    res.json({ entry });
   } catch (error) {
     console.error('Get entry error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-app.put('/api/entries/:id', requireAuth, (req, res) => {
+app.put('/api/entries/:id', requireAuth, async (req, res) => {
   try {
     const { content, title } = req.body;
-    const entries = loadJSON(getEntriesFile(req.session.userId));
-    const index = entries.findIndex(e => e.id === req.params.id);
-    if (index === -1) return res.status(404).json({ error: 'Entry not found' });
-
+    const updates = {};
     if (content) {
-      entries[index].content = content.trim();
-      entries[index].embedding = getEmbedding(content);
+      updates.content = content.trim();
+      updates.embedding = getEmbedding(content);
     }
-    if (title !== undefined) entries[index].title = title;
-    entries[index].updatedAt = new Date().toISOString();
+    if (title !== undefined) updates.title = title;
 
-    saveJSON(getEntriesFile(req.session.userId), entries);
-    const { embedding, ...clean } = entries[index];
-    res.json({ entry: clean });
+    const entry = await dbUpdateEntry(req.session.userId, req.params.id, updates);
+    if (!entry) return res.status(404).json({ error: 'Entry not found' });
+    res.json({ entry });
   } catch (error) {
     console.error('Update entry error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-app.delete('/api/entries/:id', requireAuth, (req, res) => {
+app.delete('/api/entries/:id', requireAuth, async (req, res) => {
   try {
-    const entries = loadJSON(getEntriesFile(req.session.userId));
-    const index = entries.findIndex(e => e.id === req.params.id);
-    if (index === -1) return res.status(404).json({ error: 'Entry not found' });
-
-    entries.splice(index, 1);
-    saveJSON(getEntriesFile(req.session.userId), entries);
+    const deleted = await dbDeleteEntry(req.session.userId, req.params.id);
+    if (!deleted) return res.status(404).json({ error: 'Entry not found' });
     res.json({ success: true });
   } catch (error) {
     console.error('Delete entry error:', error);
@@ -383,10 +347,11 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
     const { content, entryId } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const systemPrompt = `You are a developer growth journal analyst. Analyze this journal entry from a software developer. Return JSON only:
+    const apiKey = await resolveApiKey(req.session.userId);
+    const systemPrompt = `You are a personal growth journal analyst. Analyze this journal entry from a university student or recent graduate. Return JSON only:
 {
   "mood": "one word mood (e.g. excited, frustrated, focused, anxious, confident, neutral)",
-  "tags": ["3-5 relevant tags like debugging, learning, career, architecture, deployment"],
+  "tags": ["3-5 relevant tags like academics, career, relationships, wellness, personal growth"],
   "summary": "2-3 sentence summary of the key points",
   "encouragement": "A brief encouraging note specific to what they wrote about"
 }`;
@@ -394,7 +359,7 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
     const response = await groqChat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content }
-    ]);
+    ], { _apiKey: apiKey });
 
     const analysis = safeParseJson(response);
     if (!analysis) {
@@ -403,15 +368,11 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
 
     // persist analysis on the entry if we have an id
     if (entryId) {
-      const entries = loadJSON(getEntriesFile(req.session.userId));
-      const entry = entries.find(e => e.id === entryId);
-      if (entry) {
-        entry.mood = analysis.mood;
-        entry.tags = analysis.tags;
-        entry.summary = analysis.summary;
-        entry.analyzedAt = new Date().toISOString();
-        saveJSON(getEntriesFile(req.session.userId), entries);
-      }
+      await updateEntryAnalysis(req.session.userId, entryId, {
+        mood: analysis.mood,
+        tags: analysis.tags,
+        summary: analysis.summary,
+      });
     }
 
     res.json({ analysis });
@@ -426,7 +387,8 @@ app.post('/api/clarity', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const systemPrompt = `You are a thoughtful developer coach. Based on this journal entry, provide a brief reflection and 3 clarifying questions to help the developer think deeper. Return JSON only:
+    const apiKey = await resolveApiKey(req.session.userId);
+    const systemPrompt = `You are a thoughtful personal growth coach. Based on this journal entry, provide a brief reflection and 3 clarifying questions to help the writer think deeper. Return JSON only:
 {
   "reflection": "A 2-3 sentence thoughtful reflection on what they wrote",
   "questions": ["question 1", "question 2", "question 3"]
@@ -435,7 +397,7 @@ app.post('/api/clarity', requireAuth, async (req, res) => {
     const response = await groqChat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content }
-    ]);
+    ], { _apiKey: apiKey });
 
     const clarity = safeParseJson(response);
     if (!clarity) {
@@ -451,21 +413,20 @@ app.post('/api/clarity', requireAuth, async (req, res) => {
 
 // semantic search
 
-app.post('/api/search', requireAuth, (req, res) => {
+app.post('/api/search', requireAuth, async (req, res) => {
   try {
     const { query } = req.body;
     if (!query) return res.status(400).json({ error: 'Query is required' });
 
-    const entries = loadJSON(getEntriesFile(req.session.userId));
+    const entries = await getEntriesWithEmbeddings(req.session.userId);
     const queryEmbedding = getEmbedding(query);
 
     const results = entries
-      .filter(e => e.embedding)
       .map(entry => ({
         id: entry.id,
         title: entry.title,
         content: entry.content.substring(0, 200) + (entry.content.length > 200 ? '...' : ''),
-        createdAt: entry.createdAt,
+        createdAt: entry.created_at,
         mood: entry.mood,
         tags: entry.tags,
         similarity: cosineSimilarity(queryEmbedding, entry.embedding)
@@ -488,17 +449,16 @@ app.post('/api/reflect', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const entries = loadJSON(getEntriesFile(req.session.userId));
+    const entries = await getEntriesWithEmbeddings(req.session.userId);
     const queryEmbedding = getEmbedding(content);
 
     // grab the 5 most similar past entries for context
     const related = entries
-      .filter(e => e.embedding)
       .map(entry => ({
         content: entry.content,
         mood: entry.mood,
         tags: entry.tags,
-        date: entry.createdAt,
+        date: entry.created_at,
         similarity: cosineSimilarity(queryEmbedding, entry.embedding)
       }))
       .filter(r => r.similarity > 0.15)
@@ -509,7 +469,8 @@ app.post('/api/reflect', requireAuth, async (req, res) => {
       ? `\n\nRelated past entries:\n${related.map((r, i) => `[${i + 1}] (${new Date(r.date).toLocaleDateString()}, mood: ${r.mood || 'unknown'}): ${r.content.substring(0, 300)}`).join('\n')}`
       : '';
 
-    const systemPrompt = `You are a developer growth coach with access to the developer's journal history. Based on their current entry and related past entries, provide a reflection that connects patterns and tracks growth. Return JSON only:
+    const apiKey = await resolveApiKey(req.session.userId);
+    const systemPrompt = `You are a personal growth coach with access to the writer's journal history. Based on their current entry and related past entries, provide a reflection that connects patterns and tracks growth. Return JSON only:
 {
   "reflection": "A thoughtful 3-4 sentence reflection connecting current entry to past patterns",
   "patterns": ["pattern 1 you noticed", "pattern 2"],
@@ -519,7 +480,7 @@ app.post('/api/reflect', requireAuth, async (req, res) => {
     const response = await groqChat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `Current entry: ${content}${contextStr}` }
-    ], { temperature: 0.5 });
+    ], { temperature: 0.5, _apiKey: apiKey });
 
     const reflection = safeParseJson(response);
     if (!reflection) {
@@ -540,20 +501,19 @@ app.post('/api/reflect', requireAuth, async (req, res) => {
 
 app.get('/api/recap', requireAuth, async (req, res) => {
   try {
-    const entries = loadJSON(getEntriesFile(req.session.userId));
     const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-    const weekEntries = entries.filter(e => new Date(e.createdAt) >= oneWeekAgo);
+    const weekEntries = await getEntriesInDateRange(req.session.userId, oneWeekAgo, new Date());
 
     if (weekEntries.length === 0) {
       return res.json({ recap: { summary: 'No entries this week. Start journaling to get your weekly recap!', highlights: [], mood: 'N/A' } });
     }
 
     const entrySummaries = weekEntries.map(e =>
-      `[${new Date(e.createdAt).toLocaleDateString()}] ${e.summary || e.content.substring(0, 200)}`
+      `[${new Date(e.created_at).toLocaleDateString()}] ${e.summary || e.content.substring(0, 200)}`
     ).join('\n');
 
-    const systemPrompt = `You are a developer growth coach. Summarize this developer's week based on their journal entries. Return JSON only:
+    const apiKey = await resolveApiKey(req.session.userId);
+    const systemPrompt = `You are a personal growth coach. Summarize this person's week based on their journal entries. Return JSON only:
 {
   "summary": "3-4 sentence overview of their week",
   "highlights": ["highlight 1", "highlight 2", "highlight 3"],
@@ -565,7 +525,7 @@ app.get('/api/recap', requireAuth, async (req, res) => {
     const response = await groqChat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `This week's entries:\n${entrySummaries}` }
-    ], { temperature: 0.5 });
+    ], { temperature: 0.5, _apiKey: apiKey });
 
     const recap = safeParseJson(response);
     if (!recap) {
@@ -581,15 +541,15 @@ app.get('/api/recap', requireAuth, async (req, res) => {
 
 // insights and trends
 
-app.get('/api/insights/mood-trends', requireAuth, (req, res) => {
+app.get('/api/insights/mood-trends', requireAuth, async (req, res) => {
   try {
-    const entries = loadJSON(getEntriesFile(req.session.userId));
+    const entries = await dbGetEntries(req.session.userId);
 
     // only entries that have been through analysis have moods
     const moodEntries = entries
       .filter(e => e.mood)
       .map(e => ({
-        date: e.createdAt,
+        date: e.created_at,
         mood: e.mood
       }))
       .sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -613,8 +573,7 @@ app.get('/api/insights/mood-trends', requireAuth, (req, res) => {
 
 app.post('/api/insights/growth-patterns', requireAuth, async (req, res) => {
   try {
-    const entries = loadJSON(getEntriesFile(req.session.userId));
-    const analyzed = entries.filter(e => e.tags || e.mood || e.summary);
+    const analyzed = await getAnalyzedEntries(req.session.userId);
 
     if (analyzed.length < 2) {
       return res.json({
@@ -628,13 +587,14 @@ app.post('/api/insights/growth-patterns', requireAuth, async (req, res) => {
     }
 
     const context = analyzed.map(e =>
-      `[${new Date(e.createdAt).toLocaleDateString()}] mood: ${e.mood || 'unknown'}, tags: ${(e.tags || []).join(', ')}, summary: ${e.summary || e.content.substring(0, 200)}`
+      `[${new Date(e.created_at).toLocaleDateString()}] mood: ${e.mood || 'unknown'}, tags: ${(e.tags || []).join(', ')}, summary: ${e.summary || e.content.substring(0, 200)}`
     ).join('\n');
 
-    const systemPrompt = `You are a developer growth analyst. Analyze all of this developer's journal entries to identify long-term patterns. Return JSON only:
+    const apiKey = await resolveApiKey(req.session.userId);
+    const systemPrompt = `You are a personal growth analyst. Analyze all of this person's journal entries to identify long-term patterns. Return JSON only:
 {
-  "growthAreas": ["specific area where the developer has grown over time"],
-  "blindSpots": ["recurring theme or issue the developer hasn't addressed"],
+  "growthAreas": ["specific area where the person has grown over time"],
+  "blindSpots": ["recurring theme or issue the person hasn't addressed"],
   "recurringThemes": ["theme that appears across many entries"],
   "suggestion": "one specific thing to journal about next based on the patterns you see"
 }
@@ -643,7 +603,7 @@ Provide 2-3 items for each array. Be specific and reference actual patterns from
     const response = await groqChat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `All journal entries:\n${context}` }
-    ], { temperature: 0.7, max_tokens: 1024 });
+    ], { temperature: 0.7, max_tokens: 1024, _apiKey: apiKey });
 
     console.log('[growth-patterns] generated for', req.session.userId);
 
@@ -666,7 +626,8 @@ app.post('/api/stream/analyze', requireAuth, async (req, res) => {
     const { content, entryId } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const systemPrompt = `You are a developer growth journal analyst. Analyze this journal entry from a software developer. Return JSON only:
+    const apiKey = await resolveApiKey(req.session.userId);
+    const systemPrompt = `You are a personal growth journal analyst. Analyze this journal entry from a university student or recent graduate. Return JSON only:
 {
   "mood": "one word mood",
   "tags": ["3-5 relevant tags"],
@@ -680,7 +641,7 @@ app.post('/api/stream/analyze', requireAuth, async (req, res) => {
       for await (const token of groqChatStream([
         { role: 'system', content: systemPrompt },
         { role: 'user', content }
-      ])) {
+      ], { _apiKey: apiKey })) {
         full += token;
         sse.sendToken(token);
       }
@@ -692,15 +653,11 @@ app.post('/api/stream/analyze', requireAuth, async (req, res) => {
     const analysis = safeParseJson(full);
     if (analysis) {
       if (entryId) {
-        const entries = loadJSON(getEntriesFile(req.session.userId));
-        const entry = entries.find(e => e.id === entryId);
-        if (entry) {
-          entry.mood = analysis.mood;
-          entry.tags = analysis.tags;
-          entry.summary = analysis.summary;
-          entry.analyzedAt = new Date().toISOString();
-          saveJSON(getEntriesFile(req.session.userId), entries);
-        }
+        await updateEntryAnalysis(req.session.userId, entryId, {
+          mood: analysis.mood,
+          tags: analysis.tags,
+          summary: analysis.summary,
+        });
       }
       sse.sendJson({ parsed: analysis });
     }
@@ -716,7 +673,8 @@ app.post('/api/stream/clarity', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const systemPrompt = `You are a thoughtful developer coach. Based on this journal entry, provide a brief reflection and 3 clarifying questions. Return JSON only:
+    const apiKey = await resolveApiKey(req.session.userId);
+    const systemPrompt = `You are a thoughtful personal growth coach. Based on this journal entry, provide a brief reflection and 3 clarifying questions. Return JSON only:
 {
   "reflection": "A 2-3 sentence thoughtful reflection",
   "questions": ["question 1", "question 2", "question 3"]
@@ -728,7 +686,7 @@ app.post('/api/stream/clarity', requireAuth, async (req, res) => {
       for await (const token of groqChatStream([
         { role: 'system', content: systemPrompt },
         { role: 'user', content }
-      ])) {
+      ], { _apiKey: apiKey })) {
         full += token;
         sse.sendToken(token);
       }
@@ -751,16 +709,15 @@ app.post('/api/stream/reflect', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const entries = loadJSON(getEntriesFile(req.session.userId));
+    const entries = await getEntriesWithEmbeddings(req.session.userId);
     const queryEmbedding = getEmbedding(content);
 
     const related = entries
-      .filter(e => e.embedding)
       .map(entry => ({
         content: entry.content,
         mood: entry.mood,
         tags: entry.tags,
-        date: entry.createdAt,
+        date: entry.created_at,
         similarity: cosineSimilarity(queryEmbedding, entry.embedding)
       }))
       .filter(r => r.similarity > 0.15)
@@ -771,7 +728,8 @@ app.post('/api/stream/reflect', requireAuth, async (req, res) => {
       ? `\n\nRelated past entries:\n${related.map((r, i) => `[${i + 1}] (${new Date(r.date).toLocaleDateString()}, mood: ${r.mood || 'unknown'}): ${r.content.substring(0, 300)}`).join('\n')}`
       : '';
 
-    const systemPrompt = `You are a developer growth coach with access to the developer's journal history. Based on their current entry and related past entries, provide a reflection that connects patterns and tracks growth. Return JSON only:
+    const apiKey = await resolveApiKey(req.session.userId);
+    const systemPrompt = `You are a personal growth coach with access to the writer's journal history. Based on their current entry and related past entries, provide a reflection that connects patterns and tracks growth. Return JSON only:
 {
   "reflection": "A thoughtful 3-4 sentence reflection",
   "patterns": ["pattern 1", "pattern 2"],
@@ -784,7 +742,7 @@ app.post('/api/stream/reflect', requireAuth, async (req, res) => {
       for await (const token of groqChatStream([
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `Current entry: ${content}${contextStr}` }
-      ], { temperature: 0.5 })) {
+      ], { temperature: 0.5, _apiKey: apiKey })) {
         full += token;
         sse.sendToken(token);
       }
@@ -804,29 +762,27 @@ app.post('/api/stream/reflect', requireAuth, async (req, res) => {
 
 // ai coach — multi-turn chat with journal context
 
-function buildCoachContext(userId) {
-  const entries = loadJSON(getEntriesFile(userId));
-  const sorted = [...entries].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  const recent = sorted.slice(0, 10);
+async function buildCoachContext(userId) {
+  const entries = await dbGetEntries(userId);
+  const recent = entries.slice(0, 10);
 
   let context = '';
   if (recent.length > 0) {
     context += 'Recent journal entries:\n';
     context += recent.map(e =>
-      `[${new Date(e.createdAt).toLocaleDateString()}] mood: ${e.mood || 'unknown'} | ${e.content.substring(0, 200)}`
+      `[${new Date(e.created_at).toLocaleDateString()}] mood: ${e.mood || 'unknown'} | ${e.content.substring(0, 200)}`
     ).join('\n');
   }
   return context;
 }
 
-function buildCoachContextWithRAG(userId, lastUserMessage) {
-  let context = buildCoachContext(userId);
+async function buildCoachContextWithRAG(userId, lastUserMessage) {
+  let context = await buildCoachContext(userId);
 
   if (lastUserMessage) {
-    const entries = loadJSON(getEntriesFile(userId));
+    const entries = await getEntriesWithEmbeddings(userId);
     const queryEmbedding = getEmbedding(lastUserMessage);
     const relevant = entries
-      .filter(e => e.embedding)
       .map(e => ({ ...e, similarity: cosineSimilarity(queryEmbedding, e.embedding) }))
       .filter(r => r.similarity > 0.15)
       .sort((a, b) => b.similarity - a.similarity)
@@ -835,14 +791,14 @@ function buildCoachContextWithRAG(userId, lastUserMessage) {
     if (relevant.length > 0) {
       context += '\n\nSemantically relevant entries:\n';
       context += relevant.map(e =>
-        `[${new Date(e.createdAt).toLocaleDateString()}] ${e.content.substring(0, 200)}`
+        `[${new Date(e.created_at).toLocaleDateString()}] ${e.content.substring(0, 200)}`
       ).join('\n');
     }
   }
   return context;
 }
 
-const COACH_SYSTEM = (context) => `You are ClearMind Coach, an empathetic AI developer growth coach. You have access to this developer's journal history.
+const COACH_SYSTEM = (context) => `You are ClearMind Coach, an empathetic AI growth coach. You have access to this person's journal history.
 
 ${context}
 
@@ -856,13 +812,14 @@ app.post('/api/coach', requireAuth, async (req, res) => {
     }
 
     const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
-    const context = buildCoachContextWithRAG(req.session.userId, lastUserMsg?.content);
+    const context = await buildCoachContextWithRAG(req.session.userId, lastUserMsg?.content);
     const trimmed = messages.slice(-20);
 
+    const apiKey = await resolveApiKey(req.session.userId);
     const response = await groqChat([
       { role: 'system', content: COACH_SYSTEM(context) },
       ...trimmed
-    ], { temperature: 0.7, max_tokens: 1024 });
+    ], { temperature: 0.7, max_tokens: 1024, _apiKey: apiKey });
 
     res.json({ response });
   } catch (error) {
@@ -879,16 +836,17 @@ app.post('/api/stream/coach', requireAuth, async (req, res) => {
     }
 
     const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
-    const context = buildCoachContextWithRAG(req.session.userId, lastUserMsg?.content);
+    const context = await buildCoachContextWithRAG(req.session.userId, lastUserMsg?.content);
     const trimmed = messages.slice(-20);
 
+    const apiKey = await resolveApiKey(req.session.userId);
     const sse = initSSE(res);
     let full = '';
     try {
       for await (const token of groqChatStream([
         { role: 'system', content: COACH_SYSTEM(context) },
         ...trimmed
-      ], { temperature: 0.7, max_tokens: 1024 })) {
+      ], { temperature: 0.7, max_tokens: 1024, _apiKey: apiKey })) {
         full += token;
         sse.sendToken(token);
       }
@@ -909,9 +867,8 @@ app.post('/api/stream/coach', requireAuth, async (req, res) => {
 
 app.get('/api/prompts', requireAuth, async (req, res) => {
   try {
-    const entries = loadJSON(getEntriesFile(req.session.userId));
-    const sorted = [...entries].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    const recent = sorted.slice(0, 15);
+    const entries = await dbGetEntries(req.session.userId);
+    const recent = entries.slice(0, 15);
 
     if (recent.length === 0) {
       return res.json({
@@ -935,7 +892,8 @@ app.get('/api/prompts', requireAuth, async (req, res) => {
     const topTags = Object.entries(tags).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t]) => t);
     const recentMoods = moods.slice(0, 5);
 
-    const systemPrompt = `Generate 3 personalized journal prompts for a developer. Their recent topics: ${topTags.join(', ')}. Recent moods: ${recentMoods.join(', ')}. Recent summaries: ${summaries.slice(0, 5).join(' | ')}
+    const apiKey = await resolveApiKey(req.session.userId);
+    const systemPrompt = `Generate 3 personalized journal prompts for a university student or recent graduate. Their recent topics: ${topTags.join(', ')}. Recent moods: ${recentMoods.join(', ')}. Recent summaries: ${summaries.slice(0, 5).join(' | ')}
 
 Suggest prompts that explore areas NOT already covered. Return JSON only:
 [
@@ -947,7 +905,7 @@ Suggest prompts that explore areas NOT already covered. Return JSON only:
     const response = await groqChat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: 'Generate prompts' }
-    ], { temperature: 0.8, max_tokens: 512 });
+    ], { temperature: 0.8, max_tokens: 512, _apiKey: apiKey });
 
     const parsed = safeParseJson(response);
     if (!parsed || !Array.isArray(parsed)) {
@@ -976,22 +934,19 @@ app.post('/api/time-capsule', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'daysAgo is required and must be > 0' });
     }
 
-    const entries = loadJSON(getEntriesFile(req.session.userId));
     const now = new Date();
     const weekMs = 7 * 24 * 60 * 60 * 1000;
 
-    const recentEntries = entries.filter(e => {
-      const d = new Date(e.createdAt);
-      return (now - d) <= weekMs;
-    });
+    const recentEntries = await getEntriesInDateRange(
+      req.session.userId,
+      new Date(now - weekMs),
+      now
+    );
 
     const pastCenter = new Date(now - daysAgo * 24 * 60 * 60 * 1000);
     const pastStart = new Date(pastCenter - weekMs / 2);
     const pastEnd = new Date(pastCenter.getTime() + weekMs / 2);
-    const pastEntries = entries.filter(e => {
-      const d = new Date(e.createdAt);
-      return d >= pastStart && d <= pastEnd;
-    });
+    const pastEntries = await getEntriesInDateRange(req.session.userId, pastStart, pastEnd);
 
     if (recentEntries.length === 0 && pastEntries.length === 0) {
       return res.json({
@@ -1003,10 +958,11 @@ app.post('/api/time-capsule', requireAuth, async (req, res) => {
     }
 
     const formatEntries = (arr) => arr.map(e =>
-      `[${new Date(e.createdAt).toLocaleDateString()}] mood: ${e.mood || 'unknown'} | ${e.summary || e.content.substring(0, 200)}`
+      `[${new Date(e.created_at).toLocaleDateString()}] mood: ${e.mood || 'unknown'} | ${e.summary || e.content.substring(0, 200)}`
     ).join('\n');
 
-    const systemPrompt = `Compare two periods of a developer's journal. "Then" is from ${daysAgo} days ago, "Now" is the past week. Return JSON only:
+    const apiKey = await resolveApiKey(req.session.userId);
+    const systemPrompt = `Compare two periods of a person's journal. "Then" is from ${daysAgo} days ago, "Now" is the past week. Return JSON only:
 {
   "narrative": "3-5 sentence second-person growth story",
   "changes": ["specific change 1", "specific change 2", "specific change 3"],
@@ -1018,7 +974,7 @@ app.post('/api/time-capsule', requireAuth, async (req, res) => {
     const response = await groqChat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `THEN (${daysAgo} days ago):\n${formatEntries(pastEntries) || 'No entries'}\n\nNOW (this week):\n${formatEntries(recentEntries) || 'No entries'}` }
-    ], { temperature: 0.6, max_tokens: 1024 });
+    ], { temperature: 0.6, max_tokens: 1024, _apiKey: apiKey });
 
     const capsule = safeParseJson(response);
     if (!capsule) {
@@ -1036,21 +992,15 @@ app.post('/api/time-capsule', requireAuth, async (req, res) => {
   }
 });
 
-// lets the user save their groq api key from the settings banner
-app.post('/api/settings/api-key', requireAuth, (req, res) => {
+// per-user api key management (BYOK)
+app.post('/api/settings/api-key', requireAuth, async (req, res) => {
   try {
     const { apiKey } = req.body;
     if (!apiKey || !apiKey.trim()) {
       return res.status(400).json({ error: 'API key is required' });
     }
 
-    const config = loadConfig();
-    config.groqApiKey = apiKey.trim();
-    saveConfig(config);
-
-    // swap the groq client to use the new key
-    groq = new Groq({ apiKey: apiKey.trim() });
-
+    await setUserApiKey(req.session.userId, apiKey.trim());
     res.json({ success: true });
   } catch (error) {
     console.error('Save API key error:', error);
@@ -1059,28 +1009,23 @@ app.post('/api/settings/api-key', requireAuth, (req, res) => {
 });
 
 // quick check so the frontend knows whether to show the setup banner
-app.get('/api/settings/has-key', requireAuth, (req, res) => {
-  const config = loadConfig();
+app.get('/api/settings/has-key', requireAuth, async (req, res) => {
+  const userKey = await getUserApiKey(req.session.userId);
   const envKey = process.env.GROQ_API_KEY || '';
-  const hasKey = !!(config.groqApiKey || envKey);
+  const hasKey = !!(userKey || envKey);
   res.json({ hasKey });
 });
-
-// on startup, load any saved key from config
-(function loadSavedApiKey() {
-  try {
-    const config = loadConfig();
-    if (config.groqApiKey) {
-      groq = new Groq({ apiKey: config.groqApiKey });
-    }
-  } catch {}
-})();
 
 // boot the server
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
-    console.log(`ClearMindAI running at http://localhost:${PORT}`);
+  initDB().then(() => {
+    app.listen(PORT, () => {
+      console.log(`ClearMindAI running at http://localhost:${PORT}`);
+    });
+  }).catch(err => {
+    console.error('Failed to initialize database:', err);
+    process.exit(1);
   });
 }
 
