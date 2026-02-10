@@ -2108,7 +2108,6 @@ body::after {
 
 /* input focus glow */
 
-.auth-form input:focus,
 .search-input:focus {
   animation: inputBreathe 2s var(--drift) infinite;
 }
