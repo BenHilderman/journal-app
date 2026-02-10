@@ -335,11 +335,12 @@ body::after {
   font-family: var(--mono);
   font-size: 0.9rem;
   color: var(--brown);
-  min-height: 52px;
+  height: calc(1.5em * 2 + 28px);
   text-align: left;
   line-height: 1.5;
   box-shadow: var(--shadow-sm);
   transition: all 0.5s var(--ease);
+  overflow: hidden;
 }
 
 .typing-demo:hover {
