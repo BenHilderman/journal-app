@@ -2751,33 +2751,68 @@ body::after {
 
 @media (max-width: 768px) {
   /* auth screen */
-  #authScreen { padding: 16px; }
+  #authScreen { padding: 20px 16px; }
   .auth-container { max-width: 100%; }
-  .logo { margin-bottom: 24px; }
-  .logo-mark { width: 64px; height: 64px; border-radius: 22px; }
-  .logo-brain { font-size: 32px; }
-  .logo h1 { font-size: 2rem; letter-spacing: -1px; }
-  .tagline { font-size: 0.95rem; }
-  .typing-demo { font-size: 0.82rem; padding: 12px 14px; margin-bottom: 20px; height: calc(1.5em * 2 + 24px); }
-  .auth-form input { padding: 13px 16px; font-size: 0.95rem; }
-  .btn { padding: 12px 18px; font-size: 0.9rem; }
+  .logo { margin-bottom: 20px; }
+  .logo-mark { width: 60px; height: 60px; border-radius: 20px; }
+  .logo-brain { font-size: 30px; }
+  .logo h1 { font-size: 1.8rem; letter-spacing: -1px; }
+  .tagline { font-size: 0.9rem; margin-top: 4px; }
+  .typing-demo { font-size: 0.8rem; padding: 10px 14px; margin-bottom: 16px; height: calc(1.5em * 2 + 20px); }
+  .auth-form { gap: 8px; }
+  .auth-form input { padding: 12px 14px; font-size: 0.9rem; border-radius: 12px; }
+  .btn { padding: 11px 16px; font-size: 0.88rem; }
 
-  /* header */
-  .app-header { padding: 0 12px; height: 48px; }
-  .header-brain { font-size: 20px; }
-  .header-title { font-size: 0.95rem; }
+  /* disable hover transforms on mobile — they cause layout jumps */
+  .auth-form input:hover,
+  .search-input:hover,
+  .typing-demo:hover,
+  .entry-editor:hover,
+  .entry-card:hover,
+  .btn:hover {
+    transform: none;
+  }
+  .auth-form input:focus,
+  .search-input:focus {
+    transform: none;
+  }
+
+  /* header — wrap to prevent overlap */
+  .app-header {
+    padding: 8px 12px;
+    height: auto;
+    min-height: 44px;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .header-brain { font-size: 18px; }
+  .header-title { font-size: 0.9rem; }
   .header-user-name { display: none; }
-  .header-right { gap: 4px; }
-  .header-right .btn-sm { padding: 6px 10px; font-size: 0.8rem; }
+  .header-right {
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .header-right .btn-sm {
+    padding: 5px 8px;
+    font-size: 0.75rem;
+  }
   .coach-toggle { display: none; }
+  #apiKeyHeaderBtn { font-size: 0.75rem; }
 
-  /* nav */
-  .app-nav { padding: 0 8px; top: 48px; }
-  .nav-btn { padding: 10px 8px; font-size: 0.78rem; gap: 4px; }
-  .nav-btn svg { width: 14px; height: 14px; }
+  /* nav — icon only on mobile */
+  .app-nav { padding: 0; top: auto; position: sticky; }
+  .nav-inner { gap: 0; justify-content: space-around; }
+  .nav-btn {
+    padding: 10px 0;
+    font-size: 0;
+    gap: 0;
+    flex: 1;
+    justify-content: center;
+  }
+  .nav-btn svg { width: 18px; height: 18px; }
 
   /* main content */
-  .app-main { padding: 16px 12px; }
+  .app-main { padding: 16px 14px; }
 
   /* editor */
   .editor-actions {
@@ -2786,42 +2821,68 @@ body::after {
   }
   .editor-actions .btn { width: 100%; }
   .action-divider { display: none; }
-  .entry-title-input { font-size: 1.1rem; padding: 12px 16px; }
-  .entry-editor { min-height: 180px; padding: 14px 16px; font-size: 0.95rem; }
+  .entry-title-input { font-size: 1rem; padding: 10px 14px; border-radius: 12px; }
+  .entry-editor { min-height: 160px; padding: 12px 14px; font-size: 0.9rem; border-radius: 14px; }
 
   /* sections */
+  .section-header h3 { font-size: 1.1rem; }
   .growth-cards { grid-template-columns: 1fr; }
   .section-header,
   .recap-header,
   .insights-header {
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     align-items: flex-start;
   }
   .search-input-group { flex-direction: column; }
-  .mood-chart { padding: 16px; }
+  .search-input { font-size: 0.9rem; padding: 12px 14px; }
+  .mood-chart { padding: 12px; }
 
-  /* orbs */
-  .orb-1 { width: 300px; height: 300px; }
-  .orb-2 { width: 250px; height: 250px; }
+  /* orbs — smaller on mobile */
+  .orb-1 { width: 250px; height: 250px; }
+  .orb-2 { width: 200px; height: 200px; }
   .orb-3 { display: none; }
+  .orb-app-1 { width: 400px; height: 400px; }
+  .orb-app-2 { width: 350px; height: 350px; }
 
   /* cards */
-  .entry-card { padding: 16px; }
-  .stream-card { padding: 14px 16px; font-size: 0.85rem; }
+  .entry-card { padding: 14px; border-radius: 14px; }
+  .stream-card { padding: 12px 14px; font-size: 0.82rem; }
+
+  /* coach panel full width */
+  .coach-panel { width: 100%; right: -100%; }
+
+  /* api modal */
+  .api-modal { padding: 20px; border-radius: 14px; margin: 16px; }
+  .api-modal-form { flex-direction: column; }
 }
 
-@media (max-width: 400px) {
-  .auth-container { padding: 0 4px; }
-  .logo h1 { font-size: 1.75rem; }
-  .nav-btn { padding: 10px 14px; font-size: 0; gap: 0; }
-  .nav-btn svg { width: 18px; height: 18px; }
-  .header-title { font-size: 0.85rem; }
+@media (max-width: 380px) {
+  #authScreen { padding: 16px 12px; }
+  .logo { margin-bottom: 16px; }
+  .logo-mark { width: 52px; height: 52px; border-radius: 16px; }
+  .logo-brain { font-size: 26px; }
+  .logo h1 { font-size: 1.5rem; }
+  .tagline { font-size: 0.82rem; }
+  .typing-demo { font-size: 0.75rem; padding: 8px 12px; }
+  .auth-form input { padding: 10px 12px; font-size: 0.85rem; }
+  .header-title { font-size: 0.82rem; }
+  .header-right .btn-sm { padding: 4px 6px; font-size: 0.7rem; }
 }
 
 @media (hover: none) {
   .paper-grain-svg { display: none; }
   .cursor-glow { display: none; }
+  /* disable all hover lift effects on touch */
+  .btn:hover { transform: none; box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04); }
+  .btn:hover::after { left: -120%; }
+  .auth-form input:hover,
+  .search-input:hover,
+  .typing-demo:hover,
+  .entry-editor:hover { transform: none; }
+  .entry-card:hover { transform: none; }
+  .tag:hover { transform: none; }
+  .mood-badge:hover { transform: none; }
 }
 
 /* streaming cards */
@@ -3317,25 +3378,4 @@ body::after {
   pointer-events: none;
 }
 
-@media (max-width: 768px) {
-  .api-modal {
-    padding: 24px;
-    border-radius: var(--radius-sm);
-  }
-  .api-modal-form {
-    flex-direction: column;
-  }
-}
-
-@media (max-width: 768px) {
-  .coach-panel {
-    width: 100%;
-    right: -100%;
-  }
-  .capsule-periods {
-    flex-direction: column;
-  }
-  .capsule-arrow {
-    transform: rotate(90deg);
-  }
-}
+/* capsule mobile handled in main 768px block above */
