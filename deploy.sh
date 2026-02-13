@@ -6,6 +6,9 @@ REPO_DIR="/opt/clearmind-repo"
 BRANCH="main"
 REPO_URL="https://github.com/BenHilderman/journal-app.git"
 
+# prevent git from prompting for credentials in non-interactive deploy
+export GIT_TERMINAL_PROMPT=0
+
 echo "==> Ensuring repo points to $REPO_URL..."
 cd "$REPO_DIR"
 CURRENT_URL=$(git remote get-url origin 2>/dev/null || echo "")

@@ -14,4 +14,8 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: deploy
           key: ${{ secrets.SERVER_SSH_KEY }}
-          script: /opt/clearmind/deploy.sh
+          script: |
+            export GIT_TERMINAL_PROMPT=0
+            cd /opt/clearmind-repo
+            git remote set-url origin https://github.com/BenHilderman/journal-app.git
+            /opt/clearmind/deploy.sh
