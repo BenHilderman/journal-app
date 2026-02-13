@@ -4,9 +4,17 @@ set -e
 APP_DIR="/opt/clearmind"
 REPO_DIR="/opt/clearmind-repo"
 BRANCH="main"
+REPO_URL="https://github.com/BenHilderman/journal-app.git"
+
+echo "==> Ensuring repo points to $REPO_URL..."
+cd "$REPO_DIR"
+CURRENT_URL=$(git remote get-url origin 2>/dev/null || echo "")
+if [ "$CURRENT_URL" != "$REPO_URL" ]; then
+  echo "==> Switching remote from $CURRENT_URL to $REPO_URL"
+  git remote set-url origin "$REPO_URL"
+fi
 
 echo "==> Pulling latest from $BRANCH..."
-cd "$REPO_DIR"
 git fetch origin "$BRANCH"
 git reset --hard "origin/$BRANCH"
 

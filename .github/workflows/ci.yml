@@ -12,9 +12,6 @@ jobs:
     strategy:
       matrix:
         node-version: [18, 20, 22]
-    defaults:
-      run:
-        working-directory: ClearMindAI
 
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +19,5 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
-          cache-dependency-path: ClearMindAI/package-lock.json
       - run: npm ci
       - run: npm test
