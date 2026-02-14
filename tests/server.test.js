@@ -1,35 +1,26 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import request from 'supertest';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 process.env.NODE_ENV = 'test';
-
-let testDataDir;
-let testId = 0;
-
-function setupTestDir() {
-  testId++;
-  testDataDir = path.join(__dirname, `__test_data_${testId}_${Date.now()}`);
-  process.env.DATA_DIR = testDataDir;
-  if (!fs.existsSync(testDataDir)) {
-    fs.mkdirSync(testDataDir, { recursive: true });
-  }
-}
-
-function cleanupTestDir() {
-  if (testDataDir && fs.existsSync(testDataDir)) {
-    fs.rmSync(testDataDir, { recursive: true, force: true });
-  }
-}
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://test:test@localhost:5432/clearmind_test';
 
 import app, { getEmbedding, cosineSimilarity, safeParseJson, setGroqChat, setGroqChatStream } from '../server.js';
+import { initDB, getPool, updateEntryAnalysis } from '../db.js';
+
+let testId = 0;
+
+beforeAll(async () => {
+  await initDB();
+});
+
+async function cleanup() {
+  const pool = getPool();
+  await pool.query('DELETE FROM entries');
+  await pool.query('DELETE FROM users');
+}
 
 async function createAuthenticatedAgent() {
+  testId++;
   const agent = request.agent(app);
   await agent
     .post('/api/auth/signup')
@@ -82,10 +73,9 @@ describe('Unit Tests', () => {
 // auth
 
 describe('Auth API', () => {
-  afterEach(() => cleanupTestDir());
+  afterEach(() => cleanup());
 
   it('signup creates account, returns user without password', async () => {
-    setupTestDir();
     const res = await request(app)
       .post('/api/auth/signup')
       .send({ email: 'test@example.com', password: 'password123', name: 'Test User' });
@@ -98,7 +88,6 @@ describe('Auth API', () => {
   });
 
   it('rejects duplicate email', async () => {
-    setupTestDir();
     await request(app)
       .post('/api/auth/signup')
       .send({ email: 'dup@example.com', password: 'password123' });
@@ -112,7 +101,6 @@ describe('Auth API', () => {
   });
 
   it('rejects password under 6 chars', async () => {
-    setupTestDir();
     const res = await request(app)
       .post('/api/auth/signup')
       .send({ email: 'short@example.com', password: '123' });
@@ -122,7 +110,6 @@ describe('Auth API', () => {
   });
 
   it('signin works with correct credentials', async () => {
-    setupTestDir();
     await request(app)
       .post('/api/auth/signup')
       .send({ email: 'login@example.com', password: 'password123' });
@@ -136,7 +123,6 @@ describe('Auth API', () => {
   });
 
   it('signin rejects wrong password', async () => {
-    setupTestDir();
     await request(app)
       .post('/api/auth/signup')
       .send({ email: 'reject@example.com', password: 'password123' });
@@ -150,7 +136,6 @@ describe('Auth API', () => {
   });
 
   it('/me returns null when not logged in', async () => {
-    setupTestDir();
     const res = await request(app).get('/api/auth/me');
     expect(res.status).toBe(200);
     expect(res.body.user).toBeNull();
@@ -160,10 +145,9 @@ describe('Auth API', () => {
 // entries
 
 describe('Entry CRUD', () => {
-  afterEach(() => cleanupTestDir());
+  afterEach(() => cleanup());
 
   it('creates entry with id', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     const res = await agent
@@ -177,7 +161,6 @@ describe('Entry CRUD', () => {
   });
 
   it('lists entries newest-first', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     await agent.post('/api/entries').send({ content: 'First entry' });
@@ -190,7 +173,6 @@ describe('Entry CRUD', () => {
   });
 
   it('gets single entry by id', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     const createRes = await agent
@@ -203,7 +185,6 @@ describe('Entry CRUD', () => {
   });
 
   it('updates entry content', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     const createRes = await agent
@@ -219,7 +200,6 @@ describe('Entry CRUD', () => {
   });
 
   it('deletes entry', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     const createRes = await agent
@@ -237,7 +217,6 @@ describe('Entry CRUD', () => {
   });
 
   it('rejects empty content', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     const res = await agent
@@ -252,10 +231,9 @@ describe('Entry CRUD', () => {
 // auth guards
 
 describe('Auth Guarding', () => {
-  afterEach(() => cleanupTestDir());
+  afterEach(() => cleanup());
 
   it('all protected routes 401 without session', async () => {
-    setupTestDir();
     const routes = [
       { method: 'get', path: '/api/entries' },
       { method: 'post', path: '/api/entries' },
@@ -285,7 +263,6 @@ describe('Auth Guarding', () => {
   });
 
   it('routes work when authenticated', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     const entryRes = await agent
@@ -302,13 +279,12 @@ describe('Auth Guarding', () => {
 // ai endpoints (groq mocked)
 
 describe('AI Endpoints', () => {
-  afterEach(() => {
+  afterEach(async () => {
     setGroqChat(async () => '{}');
-    cleanupTestDir();
+    await cleanup();
   });
 
   it('analyze returns mood + tags', async () => {
-    setupTestDir();
     setGroqChat(async () => JSON.stringify({
       mood: 'focused',
       tags: ['debugging', 'backend'],
@@ -327,7 +303,6 @@ describe('AI Endpoints', () => {
   });
 
   it('clarity returns reflection + questions', async () => {
-    setupTestDir();
     setGroqChat(async () => JSON.stringify({
       reflection: 'You seem to be working through a complex system design challenge.',
       questions: [
@@ -348,7 +323,6 @@ describe('AI Endpoints', () => {
   });
 
   it('search returns results with similarity scores', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     await agent.post('/api/entries').send({ content: 'Worked on React components and state management today' });
@@ -366,7 +340,6 @@ describe('AI Endpoints', () => {
   });
 
   it('reflect returns patterns + growth', async () => {
-    setupTestDir();
     setGroqChat(async () => JSON.stringify({
       reflection: 'You have been consistently working on improving your debugging skills.',
       patterns: ['Debugging focus', 'Backend emphasis'],
@@ -389,26 +362,25 @@ describe('AI Endpoints', () => {
 // insights
 
 describe('Insights', () => {
-  afterEach(() => {
+  afterEach(async () => {
     setGroqChat(async () => '{}');
-    cleanupTestDir();
+    await cleanup();
   });
 
   it('mood-trends returns timeline from analyzed entries', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
-    await agent.post('/api/entries').send({ content: 'Great day coding!' });
+    const createRes = await agent.post('/api/entries').send({ content: 'Great day coding!' });
+    const entryId = createRes.body.entry.id;
 
-    // simulate an analyzed entry by writing mood directly to the json file
-    const files = fs.readdirSync(testDataDir);
-    const entriesFile = files.find(f => f.startsWith('entries_'));
-    if (entriesFile) {
-      const filepath = path.join(testDataDir, entriesFile);
-      const entries = JSON.parse(fs.readFileSync(filepath, 'utf-8'));
-      entries[0].mood = 'excited';
-      entries[0].tags = ['productivity'];
-      fs.writeFileSync(filepath, JSON.stringify(entries, null, 2));
-    }
+    // get the user id from the session to call updateEntryAnalysis
+    const meRes = await agent.get('/api/auth/me');
+    const userId = meRes.body.user.id;
+
+    await updateEntryAnalysis(userId, entryId, {
+      mood: 'excited',
+      tags: ['productivity'],
+      summary: 'Great day coding',
+    });
 
     const res = await agent.get('/api/insights/mood-trends');
 
@@ -420,7 +392,6 @@ describe('Insights', () => {
   });
 
   it('growth-patterns returns structured analysis', async () => {
-    setupTestDir();
     setGroqChat(async () => JSON.stringify({
       growthAreas: ['Debugging skills have improved significantly'],
       blindSpots: ['Not enough focus on testing'],
@@ -429,23 +400,22 @@ describe('Insights', () => {
     }));
 
     const agent = await createAuthenticatedAgent();
-    await agent.post('/api/entries').send({ content: 'Debugged a complex issue' });
-    await agent.post('/api/entries').send({ content: 'Optimized API performance' });
+    const entry1 = await agent.post('/api/entries').send({ content: 'Debugged a complex issue' });
+    const entry2 = await agent.post('/api/entries').send({ content: 'Optimized API performance' });
 
-    // add analysis data so the endpoint doesn't bail early
-    const files = fs.readdirSync(testDataDir);
-    const entriesFile = files.find(f => f.startsWith('entries_'));
-    if (entriesFile) {
-      const filepath = path.join(testDataDir, entriesFile);
-      const entries = JSON.parse(fs.readFileSync(filepath, 'utf-8'));
-      entries[0].mood = 'focused';
-      entries[0].tags = ['debugging'];
-      entries[0].summary = 'Worked on debugging';
-      entries[1].mood = 'productive';
-      entries[1].tags = ['performance'];
-      entries[1].summary = 'Optimized API';
-      fs.writeFileSync(filepath, JSON.stringify(entries, null, 2));
-    }
+    const meRes = await agent.get('/api/auth/me');
+    const userId = meRes.body.user.id;
+
+    await updateEntryAnalysis(userId, entry1.body.entry.id, {
+      mood: 'focused',
+      tags: ['debugging'],
+      summary: 'Worked on debugging',
+    });
+    await updateEntryAnalysis(userId, entry2.body.entry.id, {
+      mood: 'productive',
+      tags: ['performance'],
+      summary: 'Optimized API',
+    });
 
     const res = await agent
       .post('/api/insights/growth-patterns')
@@ -462,13 +432,12 @@ describe('Insights', () => {
 // coach
 
 describe('Coach API', () => {
-  afterEach(() => {
+  afterEach(async () => {
     setGroqChat(async () => '{}');
-    cleanupTestDir();
+    await cleanup();
   });
 
   it('returns response with journal context', async () => {
-    setupTestDir();
     setGroqChat(async (messages) => {
       // verify system prompt contains journal context marker
       const sys = messages.find(m => m.role === 'system');
@@ -488,7 +457,6 @@ describe('Coach API', () => {
   });
 
   it('rejects empty messages array (400)', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     const res = await agent
@@ -503,13 +471,12 @@ describe('Coach API', () => {
 // writing prompts
 
 describe('Writing Prompts', () => {
-  afterEach(() => {
+  afterEach(async () => {
     setGroqChat(async () => '{}');
-    cleanupTestDir();
+    await cleanup();
   });
 
   it('returns 3 default prompts for new user', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     const res = await agent.get('/api/prompts');
@@ -521,7 +488,6 @@ describe('Writing Prompts', () => {
   });
 
   it('returns 3 personalized prompts for user with entries', async () => {
-    setupTestDir();
     setGroqChat(async () => JSON.stringify([
       { text: 'What side project are you excited about?', category: 'Projects' },
       { text: 'How are you handling code reviews?', category: 'Teamwork' },
@@ -529,19 +495,16 @@ describe('Writing Prompts', () => {
     ]));
 
     const agent = await createAuthenticatedAgent();
-    await agent.post('/api/entries').send({ content: 'Built a new API endpoint today' });
+    const createRes = await agent.post('/api/entries').send({ content: 'Built a new API endpoint today' });
 
-    // add analysis data so prompts endpoint finds tags/moods
-    const files = fs.readdirSync(testDataDir);
-    const entriesFile = files.find(f => f.startsWith('entries_'));
-    if (entriesFile) {
-      const filepath = path.join(testDataDir, entriesFile);
-      const entries = JSON.parse(fs.readFileSync(filepath, 'utf-8'));
-      entries[0].mood = 'focused';
-      entries[0].tags = ['backend', 'api'];
-      entries[0].summary = 'Built API endpoint';
-      fs.writeFileSync(filepath, JSON.stringify(entries, null, 2));
-    }
+    const meRes = await agent.get('/api/auth/me');
+    const userId = meRes.body.user.id;
+
+    await updateEntryAnalysis(userId, createRes.body.entry.id, {
+      mood: 'focused',
+      tags: ['backend', 'api'],
+      summary: 'Built API endpoint',
+    });
 
     const res = await agent.get('/api/prompts');
 
@@ -554,13 +517,12 @@ describe('Writing Prompts', () => {
 // time capsule
 
 describe('Time Capsule', () => {
-  afterEach(() => {
+  afterEach(async () => {
     setGroqChat(async () => '{}');
-    cleanupTestDir();
+    await cleanup();
   });
 
   it('rejects missing daysAgo (400)', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     const res = await agent
@@ -572,7 +534,6 @@ describe('Time Capsule', () => {
   });
 
   it('returns graceful empty result for new user', async () => {
-    setupTestDir();
     const agent = await createAuthenticatedAgent();
 
     const res = await agent
@@ -585,7 +546,6 @@ describe('Time Capsule', () => {
   });
 
   it('generates comparison when entries exist in both periods', async () => {
-    setupTestDir();
     setGroqChat(async () => JSON.stringify({
       narrative: 'You have grown significantly over the past month.',
       changes: ['More confident debugging', 'Better architecture decisions', 'Faster code reviews'],
@@ -599,26 +559,26 @@ describe('Time Capsule', () => {
     // create a "recent" entry (now)
     await agent.post('/api/entries').send({ content: 'Shipped a major feature today' });
 
-    // manipulate dates to create a "past" entry 30 days ago
-    const files = fs.readdirSync(testDataDir);
-    const entriesFile = files.find(f => f.startsWith('entries_'));
-    if (entriesFile) {
-      const filepath = path.join(testDataDir, entriesFile);
-      const entries = JSON.parse(fs.readFileSync(filepath, 'utf-8'));
+    // get user id to insert a past entry directly in the database
+    const meRes = await agent.get('/api/auth/me');
+    const userId = meRes.body.user.id;
 
-      // add a past entry dated 30 days ago
-      const pastDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      entries.push({
-        id: 'past_entry_1',
-        title: 'Past Entry',
-        content: 'Struggled with a tricky bug in the auth module',
-        createdAt: pastDate.toISOString(),
-        updatedAt: pastDate.toISOString(),
-        mood: 'frustrated',
-        tags: ['debugging'],
-      });
-      fs.writeFileSync(filepath, JSON.stringify(entries, null, 2));
-    }
+    // insert a "past" entry dated 30 days ago directly into the database
+    const pastDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO entries (id, user_id, title, content, mood, tags, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        'past_entry_1',
+        userId,
+        'Past Entry',
+        'Struggled with a tricky bug in the auth module',
+        'frustrated',
+        JSON.stringify(['debugging']),
+        pastDate,
+      ]
+    );
 
     const res = await agent
       .post('/api/time-capsule')
