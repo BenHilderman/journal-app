@@ -1,0 +1,229 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "triggers": {
+    "When_journal_entry_created": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "method": "POST",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "entryId": { "type": "string" },
+            "userId": { "type": "string" },
+            "content": { "type": "string" }
+          },
+          "required": ["entryId", "userId", "content"]
+        }
+      }
+    }
+  },
+  "actions": {
+    "Call_Analyze_Endpoint": {
+      "type": "Http",
+      "inputs": {
+        "method": "POST",
+        "uri": "@{appsetting('CLEARMIND_API_BASE')}/api/analyze",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer @{appsetting('CLEARMIND_API_KEY')}"
+        },
+        "body": {
+          "entryId": "@triggerBody()?['entryId']",
+          "content": "@triggerBody()?['content']"
+        }
+      },
+      "runAfter": {}
+    },
+    "Parse_Analysis_Response": {
+      "type": "ParseJson",
+      "inputs": {
+        "content": "@body('Call_Analyze_Endpoint')",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "entryId": { "type": "string" },
+            "mood": { "type": "string" },
+            "sentiment": { "type": "number" },
+            "themes": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "summary": { "type": "string" },
+            "suggestion": { "type": "string" }
+          }
+        }
+      },
+      "runAfter": {
+        "Call_Analyze_Endpoint": ["Succeeded"]
+      }
+    },
+    "Check_Mood_Severity": {
+      "type": "If",
+      "expression": {
+        "or": [
+          { "equals": ["@body('Parse_Analysis_Response')?['mood']", "anxious"] },
+          { "equals": ["@body('Parse_Analysis_Response')?['mood']", "depressed"] },
+          { "equals": ["@body('Parse_Analysis_Response')?['mood']", "sad"] },
+          { "equals": ["@body('Parse_Analysis_Response')?['mood']", "overwhelmed"] }
+        ]
+      },
+      "actions": {
+        "Post_Wellness_Alert_to_Teams": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['teams']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/v1.0/teams/@{appsetting('TEAMS_TEAM_ID')}/channels/@{appsetting('TEAMS_CHANNEL_ID')}/messages",
+            "body": {
+              "messageType": "message",
+              "body": {
+                "contentType": "html",
+                "content": "<attachment id=\"wellness-alert-card\"></attachment>"
+              },
+              "attachments": [
+                {
+                  "id": "wellness-alert-card",
+                  "contentType": "application/vnd.microsoft.card.adaptive",
+                  "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": [
+                      {
+                        "type": "Container",
+                        "style": "attention",
+                        "items": [
+                          {
+                            "type": "TextBlock",
+                            "text": "Wellness Alert",
+                            "weight": "Bolder",
+                            "size": "Large",
+                            "color": "Attention"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "FactSet",
+                        "facts": [
+                          {
+                            "title": "User",
+                            "value": "@{triggerBody()?['userId']}"
+                          },
+                          {
+                            "title": "Detected Mood",
+                            "value": "@{body('Parse_Analysis_Response')?['mood']}"
+                          },
+                          {
+                            "title": "Entry Summary",
+                            "value": "@{body('Parse_Analysis_Response')?['summary']}"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "TextBlock",
+                        "text": "This user may benefit from a wellness check-in. Consider reaching out to offer support.",
+                        "wrap": true,
+                        "spacing": "Medium"
+                      }
+                    ],
+                    "actions": [
+                      {
+                        "type": "Action.OpenUrl",
+                        "title": "View Entry",
+                        "url": "@{appsetting('CLEARMIND_APP_BASE')}/entries/@{triggerBody()?['entryId']}"
+                      },
+                      {
+                        "type": "Action.OpenUrl",
+                        "title": "Check In with User",
+                        "url": "@{appsetting('CLEARMIND_APP_BASE')}/users/@{triggerBody()?['userId']}/check-in"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "runAfter": {}
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Parse_Analysis_Response": ["Succeeded"]
+      }
+    },
+    "Check_Dataverse_Sync_Enabled": {
+      "type": "If",
+      "expression": {
+        "equals": ["@appsetting('ENABLE_DATAVERSE_SYNC')", "true"]
+      },
+      "actions": {
+        "Sync_to_Dataverse": {
+          "type": "Http",
+          "inputs": {
+            "method": "POST",
+            "uri": "@{appsetting('CLEARMIND_API_BASE')}/api/dataverse/sync",
+            "headers": {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer @{appsetting('CLEARMIND_API_KEY')}"
+            },
+            "body": {
+              "entryId": "@triggerBody()?['entryId']",
+              "userId": "@triggerBody()?['userId']",
+              "analysis": "@body('Parse_Analysis_Response')"
+            }
+          },
+          "runAfter": {}
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Check_Mood_Severity": ["Succeeded"]
+      }
+    },
+    "Send_Success_Response": {
+      "type": "Response",
+      "kind": "Http",
+      "inputs": {
+        "statusCode": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "status": "completed",
+          "entryId": "@triggerBody()?['entryId']",
+          "analysis": "@body('Parse_Analysis_Response')"
+        }
+      },
+      "runAfter": {
+        "Check_Dataverse_Sync_Enabled": ["Succeeded"]
+      }
+    }
+  },
+  "parameters": {
+    "$connections": {
+      "type": "Object",
+      "defaultValue": {
+        "teams": {
+          "connectionId": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/resourceGroups/@{appsetting('AZURE_RESOURCE_GROUP')}/providers/Microsoft.Web/connections/teams",
+          "connectionName": "teams",
+          "id": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/providers/Microsoft.Web/locations/@{appsetting('AZURE_LOCATION')}/managedApis/teams"
+        },
+        "clearmind": {
+          "connectionId": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/resourceGroups/@{appsetting('AZURE_RESOURCE_GROUP')}/providers/Microsoft.Web/connections/clearmind-connector",
+          "connectionName": "clearmind-connector",
+          "id": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/providers/Microsoft.Web/locations/@{appsetting('AZURE_LOCATION')}/managedApis/clearmind-connector"
+        }
+      }
+    }
+  }
+}

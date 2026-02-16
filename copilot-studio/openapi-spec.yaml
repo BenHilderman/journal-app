@@ -1,0 +1,1100 @@
+openapi: "3.0.1"
+info:
+  title: ClearMind AI
+  version: "1.0.0"
+  description: >
+    Custom connector for the ClearMind AI journal app.
+    Provides intelligent journaling with mood analysis, semantic search,
+    AI coaching, growth pattern detection, and Dataverse integration
+    for the Microsoft Power Platform.
+  contact:
+    name: ClearMind AI Support
+
+servers:
+  - url: https://your-app-name.onrender.com
+    description: Production server (replace with your deployed URL)
+
+security:
+  - azureAdOAuth: []
+
+components:
+  securitySchemes:
+    azureAdOAuth:
+      type: oauth2
+      description: Azure AD OAuth2 authentication with Bearer token
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token
+          scopes:
+            api://{clientId}/access_as_user: Access ClearMind API as a signed-in user
+
+  schemas:
+    # ── Core Models ──────────────────────────────────────────────
+
+    Entry:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the journal entry
+        title:
+          type: string
+          description: Optional title of the journal entry
+        content:
+          type: string
+          description: Body text of the journal entry
+        mood:
+          type: string
+          description: Detected mood of the entry
+        tags:
+          type: array
+          items:
+            type: string
+          description: Tags associated with the entry
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the entry was created
+        updatedAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the entry was last updated
+
+    # ── Request Bodies ───────────────────────────────────────────
+
+    CreateEntryRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          description: Body text of the journal entry
+        title:
+          type: string
+          description: Optional title for the entry
+
+    UpdateEntryRequest:
+      type: object
+      properties:
+        content:
+          type: string
+          description: Updated body text
+        title:
+          type: string
+          description: Updated title
+
+    AnalyzeRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          description: Text content to analyze
+        entryId:
+          type: string
+          description: Optional ID of an existing entry to associate the analysis with
+
+    ClarityRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          description: Text content to generate clarity questions for
+
+    SearchRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          description: Natural-language search query for semantic matching
+
+    ReflectRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          description: Text content to reflect on using RAG
+
+    GrowthPatternsRequest:
+      type: object
+      properties: {}
+      description: Request body for growth pattern analysis (server uses stored entries)
+
+    CoachRequest:
+      type: object
+      required:
+        - messages
+      properties:
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum:
+                  - user
+                  - assistant
+                description: Role of the message sender
+              content:
+                type: string
+                description: Message text
+            required:
+              - role
+              - content
+          description: Conversation history for the AI coach
+
+    TimeCapsuleRequest:
+      type: object
+      required:
+        - daysAgo
+      properties:
+        daysAgo:
+          type: integer
+          description: Number of days in the past to look back
+
+    DataverseSyncRequest:
+      type: object
+      properties: {}
+      description: Triggers a sync of journal entries to Dataverse
+
+    # ── Response Bodies ──────────────────────────────────────────
+
+    CreateEntryResponse:
+      type: object
+      properties:
+        entry:
+          $ref: "#/components/schemas/Entry"
+
+    ListEntriesResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entry"
+
+    SingleEntryResponse:
+      type: object
+      properties:
+        entry:
+          $ref: "#/components/schemas/Entry"
+
+    DeleteEntryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+
+    AnalyzeResponse:
+      type: object
+      properties:
+        analysis:
+          type: object
+          properties:
+            mood:
+              type: string
+              description: Detected mood label
+            tags:
+              type: array
+              items:
+                type: string
+              description: Extracted topic tags
+            summary:
+              type: string
+              description: Brief summary of the content
+            encouragement:
+              type: string
+              description: Supportive message based on the analysis
+
+    ClarityResponse:
+      type: object
+      properties:
+        clarity:
+          type: object
+          properties:
+            reflection:
+              type: string
+              description: Reflective summary of the content
+            questions:
+              type: array
+              items:
+                type: string
+              description: Thought-provoking questions to deepen understanding
+
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+              content:
+                type: string
+              createdAt:
+                type: string
+                format: date-time
+              mood:
+                type: string
+              tags:
+                type: array
+                items:
+                  type: string
+              similarity:
+                type: number
+                format: float
+                description: Cosine similarity score (0-1)
+
+    ReflectResponse:
+      type: object
+      properties:
+        reflection:
+          type: object
+          properties:
+            reflection:
+              type: string
+              description: AI-generated reflection grounded in past entries
+            patterns:
+              type: array
+              items:
+                type: string
+              description: Recurring patterns identified across entries
+            growth:
+              type: string
+              description: Observations about personal growth
+        relatedEntries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entry"
+          description: Past entries that informed the reflection
+
+    RecapResponse:
+      type: object
+      properties:
+        recap:
+          type: object
+          properties:
+            summary:
+              type: string
+              description: Narrative summary of the week
+            highlights:
+              type: array
+              items:
+                type: string
+              description: Key moments from the week
+            mood:
+              type: string
+              description: Overall mood for the week
+            focusAreas:
+              type: array
+              items:
+                type: string
+              description: Suggested areas to focus on next week
+            suggestion:
+              type: string
+              description: Actionable suggestion for the coming week
+        entryCount:
+          type: integer
+          description: Number of entries included in the recap
+
+    MoodTrendsResponse:
+      type: object
+      properties:
+        timeline:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              mood:
+                type: string
+          description: Chronological list of mood data points
+        frequency:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Map of mood label to occurrence count
+        total:
+          type: integer
+          description: Total number of entries analyzed
+
+    GrowthPatternsResponse:
+      type: object
+      properties:
+        patterns:
+          type: object
+          properties:
+            growthAreas:
+              type: array
+              items:
+                type: string
+              description: Areas where the user is growing
+            blindSpots:
+              type: array
+              items:
+                type: string
+              description: Potential blind spots identified
+            recurringThemes:
+              type: array
+              items:
+                type: string
+              description: Themes that recur across entries
+            suggestion:
+              type: string
+              description: Actionable suggestion based on patterns
+
+    CoachResponse:
+      type: object
+      properties:
+        response:
+          type: string
+          description: AI coach reply
+
+    PromptsResponse:
+      type: object
+      properties:
+        prompts:
+          type: array
+          items:
+            type: object
+            properties:
+              text:
+                type: string
+                description: The writing prompt
+              category:
+                type: string
+                description: Category of the prompt (e.g. gratitude, growth, reflection)
+
+    TimeCapsuleResponse:
+      type: object
+      properties:
+        narrative:
+          type: string
+          description: Story-like comparison of then vs now
+        changes:
+          type: array
+          items:
+            type: string
+          description: Notable changes since then
+        constants:
+          type: array
+          items:
+            type: string
+          description: Things that have stayed the same
+        moodShift:
+          type: string
+          description: Description of how mood has shifted
+        advice:
+          type: string
+          description: Advice your past self might give you
+        then:
+          type: object
+          description: Snapshot of the user at that point in the past
+        now:
+          type: object
+          description: Snapshot of the user at the current time
+
+    CalendarContextResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              subject:
+                type: string
+              start:
+                type: string
+                format: date-time
+              end:
+                type: string
+                format: date-time
+          description: Calendar events for the day
+        formatted:
+          type: string
+          description: Human-readable formatted calendar context
+
+    DataverseSyncResponse:
+      type: object
+      properties:
+        synced:
+          type: integer
+          description: Number of entries successfully synced
+        errors:
+          type: array
+          items:
+            type: string
+          description: Error messages for any entries that failed to sync
+
+    DataverseStatusResponse:
+      type: object
+      properties:
+        totalEntries:
+          type: integer
+          description: Total number of journal entries
+        syncedEntries:
+          type: integer
+          description: Number of entries synced to Dataverse
+        lastSync:
+          type: string
+          format: date-time
+          description: Timestamp of the last successful sync
+
+    WebhookHealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Health status (e.g. "ok")
+        timestamp:
+          type: string
+          format: date-time
+          description: Server timestamp at time of response
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+
+tags:
+  - name: Entries
+    description: CRUD operations for journal entries
+  - name: Analysis
+    description: AI-powered mood analysis, clarity questions, semantic search, and reflection
+  - name: Insights
+    description: Mood trends, growth patterns, weekly recaps, and time capsules
+  - name: Coach
+    description: AI life-coaching and writing prompts
+  - name: Integration
+    description: Dataverse sync, calendar context, and webhook health
+
+paths:
+  # ═══════════════════════════════════════════════════════════════
+  #  ENTRIES
+  # ═══════════════════════════════════════════════════════════════
+
+  /api/entries:
+    post:
+      operationId: createEntry
+      summary: Create a journal entry
+      description: Creates a new journal entry with the provided content and optional title.
+      tags:
+        - Entries
+      x-ms-visibility: important
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEntryRequest"
+      responses:
+        "201":
+          description: Entry created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateEntryResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      operationId: listEntries
+      summary: List all journal entries
+      description: Returns all journal entries for the authenticated user, ordered by creation date.
+      tags:
+        - Entries
+      x-ms-visibility: important
+      responses:
+        "200":
+          description: List of entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListEntriesResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/entries/{id}:
+    get:
+      operationId: getEntry
+      summary: Get a single journal entry
+      description: Retrieves a specific journal entry by its unique identifier.
+      tags:
+        - Entries
+      x-ms-visibility: important
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique identifier of the journal entry
+          x-ms-summary: Entry ID
+      responses:
+        "200":
+          description: Entry retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SingleEntryResponse"
+        "404":
+          description: Entry not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    put:
+      operationId: updateEntry
+      summary: Update a journal entry
+      description: Updates the content and/or title of an existing journal entry.
+      tags:
+        - Entries
+      x-ms-visibility: important
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique identifier of the journal entry
+          x-ms-summary: Entry ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateEntryRequest"
+      responses:
+        "200":
+          description: Entry updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SingleEntryResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Entry not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      operationId: deleteEntry
+      summary: Delete a journal entry
+      description: Permanently deletes a journal entry by its unique identifier.
+      tags:
+        - Entries
+      x-ms-visibility: advanced
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique identifier of the journal entry
+          x-ms-summary: Entry ID
+      responses:
+        "200":
+          description: Entry deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteEntryResponse"
+        "404":
+          description: Entry not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ═══════════════════════════════════════════════════════════════
+  #  ANALYSIS
+  # ═══════════════════════════════════════════════════════════════
+
+  /api/analyze:
+    post:
+      operationId: analyzeEntry
+      summary: Analyze journal entry
+      description: >
+        Performs AI-powered analysis on the provided text content.
+        Returns detected mood, topic tags, a brief summary, and an encouraging message.
+      tags:
+        - Analysis
+      x-ms-visibility: important
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeRequest"
+      responses:
+        "200":
+          description: Analysis completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/clarity:
+    post:
+      operationId: getClarityQuestions
+      summary: Generate clarity questions
+      description: >
+        Generates a reflective summary and thought-provoking questions
+        designed to help the user gain deeper clarity on their journal entry.
+      tags:
+        - Analysis
+      x-ms-visibility: important
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClarityRequest"
+      responses:
+        "200":
+          description: Clarity questions generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClarityResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/search:
+    post:
+      operationId: semanticSearch
+      summary: Semantic search across entries
+      description: >
+        Performs a semantic (vector-based) search across all journal entries.
+        Returns matching entries ranked by cosine similarity to the query.
+      tags:
+        - Analysis
+      x-ms-visibility: important
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/reflect:
+    post:
+      operationId: ragReflection
+      summary: RAG-powered reflection
+      description: >
+        Uses Retrieval-Augmented Generation to produce a reflection grounded
+        in the user's past journal entries. Identifies patterns, growth areas,
+        and returns the related entries that informed the reflection.
+      tags:
+        - Analysis
+      x-ms-visibility: important
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReflectRequest"
+      responses:
+        "200":
+          description: Reflection generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReflectResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ═══════════════════════════════════════════════════════════════
+  #  INSIGHTS
+  # ═══════════════════════════════════════════════════════════════
+
+  /api/recap:
+    get:
+      operationId: getWeeklyRecap
+      summary: Get weekly recap
+      description: >
+        Generates a summary of the past week's journal entries including
+        highlights, overall mood, focus areas, and a suggestion for the coming week.
+      tags:
+        - Insights
+      x-ms-visibility: important
+      responses:
+        "200":
+          description: Weekly recap generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecapResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/insights/mood-trends:
+    get:
+      operationId: getMoodTrends
+      summary: Get mood trends
+      description: >
+        Returns a chronological timeline of moods, a frequency breakdown,
+        and the total number of entries analyzed.
+      tags:
+        - Insights
+      x-ms-visibility: important
+      responses:
+        "200":
+          description: Mood trend data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoodTrendsResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/insights/growth-patterns:
+    post:
+      operationId: getGrowthPatterns
+      summary: Analyze growth patterns
+      description: >
+        Analyzes all stored entries to identify growth areas, blind spots,
+        recurring themes, and provides an actionable suggestion.
+      tags:
+        - Insights
+      x-ms-visibility: important
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrowthPatternsRequest"
+      responses:
+        "200":
+          description: Growth patterns identified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthPatternsResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/time-capsule:
+    post:
+      operationId: getTimeCapsule
+      summary: Generate a time capsule
+      description: >
+        Looks back a specified number of days and creates a narrative comparing
+        the user's past and present, highlighting changes, constants, mood shifts,
+        and offering advice.
+      tags:
+        - Insights
+      x-ms-visibility: advanced
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TimeCapsuleRequest"
+      responses:
+        "200":
+          description: Time capsule generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimeCapsuleResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ═══════════════════════════════════════════════════════════════
+  #  COACH
+  # ═══════════════════════════════════════════════════════════════
+
+  /api/coach:
+    post:
+      operationId: aiCoach
+      summary: AI coaching conversation
+      description: >
+        Sends a conversation history to the AI coach and receives
+        a contextual, supportive coaching response.
+      tags:
+        - Coach
+      x-ms-visibility: important
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CoachRequest"
+      responses:
+        "200":
+          description: Coach response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CoachResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/prompts:
+    get:
+      operationId: getWritingPrompts
+      summary: Get writing prompts
+      description: >
+        Returns a curated list of writing prompts across categories
+        like gratitude, growth, and reflection to inspire journal entries.
+      tags:
+        - Coach
+      x-ms-visibility: important
+      responses:
+        "200":
+          description: List of writing prompts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptsResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ═══════════════════════════════════════════════════════════════
+  #  INTEGRATION
+  # ═══════════════════════════════════════════════════════════════
+
+  /api/context/calendar:
+    get:
+      operationId: getCalendarContext
+      summary: Get calendar context
+      description: >
+        Retrieves the authenticated user's calendar events for the day
+        along with a human-readable formatted summary, useful for
+        contextualizing journal entries.
+      tags:
+        - Integration
+      x-ms-visibility: advanced
+      responses:
+        "200":
+          description: Calendar context retrieved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalendarContextResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/dataverse/sync:
+    post:
+      operationId: syncToDataverse
+      summary: Sync entries to Dataverse
+      description: >
+        Triggers a synchronization of all unsynced journal entries
+        to the connected Microsoft Dataverse environment.
+      tags:
+        - Integration
+      x-ms-visibility: advanced
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataverseSyncRequest"
+      responses:
+        "200":
+          description: Sync completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataverseSyncResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/dataverse/status:
+    get:
+      operationId: getDataverseStatus
+      summary: Get Dataverse sync status
+      description: >
+        Returns the current synchronization status including total entries,
+        number of synced entries, and the timestamp of the last successful sync.
+      tags:
+        - Integration
+      x-ms-visibility: advanced
+      responses:
+        "200":
+          description: Sync status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataverseStatusResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/webhooks/health:
+    get:
+      operationId: getWebhookHealth
+      summary: Webhook health check
+      description: >
+        Returns the health status of the webhook subsystem along with
+        the current server timestamp. Used by monitoring and Power Automate
+        connection checks.
+      tags:
+        - Integration
+      x-ms-visibility: internal
+      responses:
+        "200":
+          description: Health check response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookHealthResponse"

@@ -1,0 +1,519 @@
+kind: AdaptiveDialog
+modelDescription: Multi-turn AI coaching conversation with up to 10 exchanges.
+triggers:
+  - kind: OnRecognizedIntent
+    intent: CoachingSession
+    triggerQueries:
+      - "coach"
+      - "talk to coach"
+      - "need advice"
+      - "coaching"
+
+actions:
+  # ── Welcome ──
+  - kind: SendMessage
+    id: sendWelcome
+    message: |
+      Welcome to your coaching session. I'm here to listen, ask thoughtful questions, and help you work through whatever's on your mind.
+
+      You can share as much or as little as you'd like. When you're ready to wrap up, just say "done" or "that's all."
+
+      We can go up to 10 exchanges — let's make them count.
+
+  # ── Turn 1 ──
+  - kind: AskQuestion
+    id: askTurn1
+    prompt: "What's on your mind today?"
+    variable: Topic.UserMessage1
+    entity: StringEntity
+
+  - kind: InvokeHTTP
+    id: callCoach1
+    method: POST
+    url: "{System.ConnectorBaseUrl}/api/coach"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "message": "{Topic.UserMessage1}",
+        "turn": 1
+      }
+    responseVariable: Topic.CoachResponse1
+    statusCodeVariable: Topic.CoachStatus1
+
+  - kind: ConditionGroup
+    id: checkCoach1
+    conditions:
+      - id: coach1Success
+        condition: =Topic.CoachStatus1 == 200
+        actions:
+          - kind: SendMessage
+            id: sendCoach1
+            message: "{Topic.CoachResponse1.message}"
+    elseActions:
+      - kind: SendMessage
+        id: sendCoach1Error
+        message: "I'm having trouble connecting right now. Let's try again."
+      - kind: RedirectToTopic
+        id: exitOnError1
+        topicId: greeting-and-routing
+
+  # ── Turn 2 ──
+  - kind: AskQuestion
+    id: askContinue2
+    prompt: "Would you like to continue, or are you done for now? (Type your response to continue, or say 'done')"
+    variable: Topic.UserMessage2
+    entity: StringEntity
+
+  - kind: ConditionGroup
+    id: checkDone2
+    conditions:
+      - id: isDone2
+        condition: =contains(toLower(Topic.UserMessage2), 'done') || contains(toLower(Topic.UserMessage2), "that's all") || contains(toLower(Topic.UserMessage2), 'stop') || contains(toLower(Topic.UserMessage2), 'enough')
+        actions:
+          - kind: SendMessage
+            id: sendGoodbye2
+            message: "Great session! Remember, growth happens one conversation at a time. Take care."
+          - kind: RedirectToTopic
+            id: exitDone2
+            topicId: greeting-and-routing
+    elseActions:
+      - kind: InvokeHTTP
+        id: callCoach2
+        method: POST
+        url: "{System.ConnectorBaseUrl}/api/coach"
+        headers:
+          Content-Type: application/json
+        body: |
+          {
+            "message": "{Topic.UserMessage2}",
+            "turn": 2
+          }
+        responseVariable: Topic.CoachResponse2
+        statusCodeVariable: Topic.CoachStatus2
+
+      - kind: ConditionGroup
+        id: checkCoach2
+        conditions:
+          - id: coach2Success
+            condition: =Topic.CoachStatus2 == 200
+            actions:
+              - kind: SendMessage
+                id: sendCoach2
+                message: "{Topic.CoachResponse2.message}"
+        elseActions:
+          - kind: SendMessage
+            id: sendCoach2Error
+            message: "Connection issue. Let's pause here."
+          - kind: RedirectToTopic
+            id: exitOnError2
+            topicId: greeting-and-routing
+
+  # ── Turn 3 ──
+  - kind: AskQuestion
+    id: askContinue3
+    prompt: "Continue or done?"
+    variable: Topic.UserMessage3
+    entity: StringEntity
+
+  - kind: ConditionGroup
+    id: checkDone3
+    conditions:
+      - id: isDone3
+        condition: =contains(toLower(Topic.UserMessage3), 'done') || contains(toLower(Topic.UserMessage3), "that's all") || contains(toLower(Topic.UserMessage3), 'stop')
+        actions:
+          - kind: SendMessage
+            id: sendGoodbye3
+            message: "Thanks for sharing. I hope this conversation gave you some clarity. Take care of yourself."
+          - kind: RedirectToTopic
+            id: exitDone3
+            topicId: greeting-and-routing
+    elseActions:
+      - kind: InvokeHTTP
+        id: callCoach3
+        method: POST
+        url: "{System.ConnectorBaseUrl}/api/coach"
+        headers:
+          Content-Type: application/json
+        body: |
+          {
+            "message": "{Topic.UserMessage3}",
+            "turn": 3
+          }
+        responseVariable: Topic.CoachResponse3
+        statusCodeVariable: Topic.CoachStatus3
+      - kind: ConditionGroup
+        id: checkCoach3
+        conditions:
+          - id: coach3Success
+            condition: =Topic.CoachStatus3 == 200
+            actions:
+              - kind: SendMessage
+                id: sendCoach3
+                message: "{Topic.CoachResponse3.message}"
+        elseActions:
+          - kind: SendMessage
+            id: sendCoach3Error
+            message: "Connection issue. Let's pause here."
+          - kind: RedirectToTopic
+            id: exitOnError3
+            topicId: greeting-and-routing
+
+  # ── Turn 4 ──
+  - kind: AskQuestion
+    id: askContinue4
+    prompt: "Continue or done?"
+    variable: Topic.UserMessage4
+    entity: StringEntity
+
+  - kind: ConditionGroup
+    id: checkDone4
+    conditions:
+      - id: isDone4
+        condition: =contains(toLower(Topic.UserMessage4), 'done') || contains(toLower(Topic.UserMessage4), "that's all") || contains(toLower(Topic.UserMessage4), 'stop')
+        actions:
+          - kind: SendMessage
+            id: sendGoodbye4
+            message: "Wonderful conversation. Keep reflecting on what we discussed. You're doing great."
+          - kind: RedirectToTopic
+            id: exitDone4
+            topicId: greeting-and-routing
+    elseActions:
+      - kind: InvokeHTTP
+        id: callCoach4
+        method: POST
+        url: "{System.ConnectorBaseUrl}/api/coach"
+        headers:
+          Content-Type: application/json
+        body: |
+          {
+            "message": "{Topic.UserMessage4}",
+            "turn": 4
+          }
+        responseVariable: Topic.CoachResponse4
+        statusCodeVariable: Topic.CoachStatus4
+      - kind: ConditionGroup
+        id: checkCoach4
+        conditions:
+          - id: coach4Success
+            condition: =Topic.CoachStatus4 == 200
+            actions:
+              - kind: SendMessage
+                id: sendCoach4
+                message: "{Topic.CoachResponse4.message}"
+        elseActions:
+          - kind: SendMessage
+            id: sendCoach4Error
+            message: "Connection issue. Let's pause here."
+          - kind: RedirectToTopic
+            id: exitOnError4
+            topicId: greeting-and-routing
+
+  # ── Turn 5 ──
+  - kind: AskQuestion
+    id: askContinue5
+    prompt: "Continue or done?"
+    variable: Topic.UserMessage5
+    entity: StringEntity
+
+  - kind: ConditionGroup
+    id: checkDone5
+    conditions:
+      - id: isDone5
+        condition: =contains(toLower(Topic.UserMessage5), 'done') || contains(toLower(Topic.UserMessage5), "that's all") || contains(toLower(Topic.UserMessage5), 'stop')
+        actions:
+          - kind: SendMessage
+            id: sendGoodbye5
+            message: "We're at the halfway point and it's been a meaningful session. Remember to be kind to yourself."
+          - kind: RedirectToTopic
+            id: exitDone5
+            topicId: greeting-and-routing
+    elseActions:
+      - kind: InvokeHTTP
+        id: callCoach5
+        method: POST
+        url: "{System.ConnectorBaseUrl}/api/coach"
+        headers:
+          Content-Type: application/json
+        body: |
+          {
+            "message": "{Topic.UserMessage5}",
+            "turn": 5
+          }
+        responseVariable: Topic.CoachResponse5
+        statusCodeVariable: Topic.CoachStatus5
+      - kind: ConditionGroup
+        id: checkCoach5
+        conditions:
+          - id: coach5Success
+            condition: =Topic.CoachStatus5 == 200
+            actions:
+              - kind: SendMessage
+                id: sendCoach5
+                message: "{Topic.CoachResponse5.message}"
+        elseActions:
+          - kind: SendMessage
+            id: sendCoach5Error
+            message: "Connection issue. Let's pause here."
+          - kind: RedirectToTopic
+            id: exitOnError5
+            topicId: greeting-and-routing
+
+  # ── Turn 6 ──
+  - kind: AskQuestion
+    id: askContinue6
+    prompt: "Continue or done?"
+    variable: Topic.UserMessage6
+    entity: StringEntity
+
+  - kind: ConditionGroup
+    id: checkDone6
+    conditions:
+      - id: isDone6
+        condition: =contains(toLower(Topic.UserMessage6), 'done') || contains(toLower(Topic.UserMessage6), "that's all") || contains(toLower(Topic.UserMessage6), 'stop')
+        actions:
+          - kind: SendMessage
+            id: sendGoodbye6
+            message: "Thanks for this session. You've shown real self-awareness today. Keep it up!"
+          - kind: RedirectToTopic
+            id: exitDone6
+            topicId: greeting-and-routing
+    elseActions:
+      - kind: InvokeHTTP
+        id: callCoach6
+        method: POST
+        url: "{System.ConnectorBaseUrl}/api/coach"
+        headers:
+          Content-Type: application/json
+        body: |
+          {
+            "message": "{Topic.UserMessage6}",
+            "turn": 6
+          }
+        responseVariable: Topic.CoachResponse6
+        statusCodeVariable: Topic.CoachStatus6
+      - kind: ConditionGroup
+        id: checkCoach6
+        conditions:
+          - id: coach6Success
+            condition: =Topic.CoachStatus6 == 200
+            actions:
+              - kind: SendMessage
+                id: sendCoach6
+                message: "{Topic.CoachResponse6.message}"
+        elseActions:
+          - kind: SendMessage
+            id: sendCoach6Error
+            message: "Connection issue. Let's pause here."
+          - kind: RedirectToTopic
+            id: exitOnError6
+            topicId: greeting-and-routing
+
+  # ── Turn 7 ──
+  - kind: AskQuestion
+    id: askContinue7
+    prompt: "Continue or done?"
+    variable: Topic.UserMessage7
+    entity: StringEntity
+
+  - kind: ConditionGroup
+    id: checkDone7
+    conditions:
+      - id: isDone7
+        condition: =contains(toLower(Topic.UserMessage7), 'done') || contains(toLower(Topic.UserMessage7), "that's all") || contains(toLower(Topic.UserMessage7), 'stop')
+        actions:
+          - kind: SendMessage
+            id: sendGoodbye7
+            message: "Great conversation. I appreciate your openness. Until next time!"
+          - kind: RedirectToTopic
+            id: exitDone7
+            topicId: greeting-and-routing
+    elseActions:
+      - kind: InvokeHTTP
+        id: callCoach7
+        method: POST
+        url: "{System.ConnectorBaseUrl}/api/coach"
+        headers:
+          Content-Type: application/json
+        body: |
+          {
+            "message": "{Topic.UserMessage7}",
+            "turn": 7
+          }
+        responseVariable: Topic.CoachResponse7
+        statusCodeVariable: Topic.CoachStatus7
+      - kind: ConditionGroup
+        id: checkCoach7
+        conditions:
+          - id: coach7Success
+            condition: =Topic.CoachStatus7 == 200
+            actions:
+              - kind: SendMessage
+                id: sendCoach7
+                message: "{Topic.CoachResponse7.message}"
+        elseActions:
+          - kind: SendMessage
+            id: sendCoach7Error
+            message: "Connection issue. Let's pause here."
+          - kind: RedirectToTopic
+            id: exitOnError7
+            topicId: greeting-and-routing
+
+  # ── Turn 8 ──
+  - kind: AskQuestion
+    id: askContinue8
+    prompt: "Continue or done?"
+    variable: Topic.UserMessage8
+    entity: StringEntity
+
+  - kind: ConditionGroup
+    id: checkDone8
+    conditions:
+      - id: isDone8
+        condition: =contains(toLower(Topic.UserMessage8), 'done') || contains(toLower(Topic.UserMessage8), "that's all") || contains(toLower(Topic.UserMessage8), 'stop')
+        actions:
+          - kind: SendMessage
+            id: sendGoodbye8
+            message: "What a rich session. Hold onto the insights that resonated most. See you next time."
+          - kind: RedirectToTopic
+            id: exitDone8
+            topicId: greeting-and-routing
+    elseActions:
+      - kind: InvokeHTTP
+        id: callCoach8
+        method: POST
+        url: "{System.ConnectorBaseUrl}/api/coach"
+        headers:
+          Content-Type: application/json
+        body: |
+          {
+            "message": "{Topic.UserMessage8}",
+            "turn": 8
+          }
+        responseVariable: Topic.CoachResponse8
+        statusCodeVariable: Topic.CoachStatus8
+      - kind: ConditionGroup
+        id: checkCoach8
+        conditions:
+          - id: coach8Success
+            condition: =Topic.CoachStatus8 == 200
+            actions:
+              - kind: SendMessage
+                id: sendCoach8
+                message: "{Topic.CoachResponse8.message}"
+        elseActions:
+          - kind: SendMessage
+            id: sendCoach8Error
+            message: "Connection issue. Let's pause here."
+          - kind: RedirectToTopic
+            id: exitOnError8
+            topicId: greeting-and-routing
+
+  # ── Turn 9 ──
+  - kind: AskQuestion
+    id: askContinue9
+    prompt: "We have two exchanges left. Continue or done?"
+    variable: Topic.UserMessage9
+    entity: StringEntity
+
+  - kind: ConditionGroup
+    id: checkDone9
+    conditions:
+      - id: isDone9
+        condition: =contains(toLower(Topic.UserMessage9), 'done') || contains(toLower(Topic.UserMessage9), "that's all") || contains(toLower(Topic.UserMessage9), 'stop')
+        actions:
+          - kind: SendMessage
+            id: sendGoodbye9
+            message: "Almost used all our time — great dedication! Take what you've learned and run with it."
+          - kind: RedirectToTopic
+            id: exitDone9
+            topicId: greeting-and-routing
+    elseActions:
+      - kind: InvokeHTTP
+        id: callCoach9
+        method: POST
+        url: "{System.ConnectorBaseUrl}/api/coach"
+        headers:
+          Content-Type: application/json
+        body: |
+          {
+            "message": "{Topic.UserMessage9}",
+            "turn": 9
+          }
+        responseVariable: Topic.CoachResponse9
+        statusCodeVariable: Topic.CoachStatus9
+      - kind: ConditionGroup
+        id: checkCoach9
+        conditions:
+          - id: coach9Success
+            condition: =Topic.CoachStatus9 == 200
+            actions:
+              - kind: SendMessage
+                id: sendCoach9
+                message: "{Topic.CoachResponse9.message}"
+        elseActions:
+          - kind: SendMessage
+            id: sendCoach9Error
+            message: "Connection issue. Let's pause here."
+          - kind: RedirectToTopic
+            id: exitOnError9
+            topicId: greeting-and-routing
+
+  # ── Turn 10 (final) ──
+  - kind: AskQuestion
+    id: askContinue10
+    prompt: "This is our last exchange. Any final thoughts?"
+    variable: Topic.UserMessage10
+    entity: StringEntity
+
+  - kind: ConditionGroup
+    id: checkDone10
+    conditions:
+      - id: isDone10
+        condition: =contains(toLower(Topic.UserMessage10), 'done') || contains(toLower(Topic.UserMessage10), "that's all") || contains(toLower(Topic.UserMessage10), 'stop')
+        actions:
+          - kind: SendMessage
+            id: sendGoodbye10Short
+            message: "Thanks for the session! Be well."
+    elseActions:
+      - kind: InvokeHTTP
+        id: callCoach10
+        method: POST
+        url: "{System.ConnectorBaseUrl}/api/coach"
+        headers:
+          Content-Type: application/json
+        body: |
+          {
+            "message": "{Topic.UserMessage10}",
+            "turn": 10
+          }
+        responseVariable: Topic.CoachResponse10
+        statusCodeVariable: Topic.CoachStatus10
+      - kind: ConditionGroup
+        id: checkCoach10
+        conditions:
+          - id: coach10Success
+            condition: =Topic.CoachStatus10 == 200
+            actions:
+              - kind: SendMessage
+                id: sendCoach10
+                message: "{Topic.CoachResponse10.message}"
+        elseActions:
+          - kind: SendMessage
+            id: sendCoach10Error
+            message: "Connection issue, but we were wrapping up anyway."
+
+  # ── Session complete ──
+  - kind: SendMessage
+    id: sendSessionEnd
+    message: |
+      That wraps up our coaching session. Here's what I'd encourage you to do:
+      - Journal about what came up today
+      - Revisit any insights in a day or two
+      - Come back anytime you want to talk
+
+      Take care of yourself.
+
+  - kind: RedirectToTopic
+    id: backToMenu
+    topicId: greeting-and-routing

@@ -1,0 +1,157 @@
+kind: AdaptiveDialog
+modelDescription: Step-by-step guided journal entry creation with optional AI analysis.
+triggers:
+  - kind: OnRecognizedIntent
+    intent: GuidedJournaling
+    triggerQueries:
+      - "journal"
+      - "write"
+      - "new entry"
+      - "log my thoughts"
+
+actions:
+  # ── Introduction ──
+  - kind: SendMessage
+    id: sendIntro
+    message: "Let's create a new journal entry. I'll walk you through it step by step."
+
+  # ── Step 1: Collect title ──
+  - kind: AskQuestion
+    id: askTitle
+    prompt: "First, give your entry a title. This can be a word, phrase, or whatever feels right."
+    variable: Topic.EntryTitle
+    entity: StringEntity
+
+  # ── Step 2: Collect content ──
+  - kind: AskQuestion
+    id: askContent
+    prompt: |
+      Great title! Now write out your thoughts. Take as much space as you need — this is your space to be honest and open.
+    variable: Topic.EntryContent
+    entity: StringEntity
+
+  # ── Step 3: Confirm before saving ──
+  - kind: SendMessage
+    id: sendPreview
+    message: |
+      Here's a preview of your entry:
+
+      **Title:** {Topic.EntryTitle}
+      **Content:** {Topic.EntryContent}
+
+  - kind: AskQuestion
+    id: askConfirmSave
+    prompt: "Would you like to save this entry?"
+    variable: Topic.ConfirmSave
+    entity: BooleanEntity
+
+  - kind: ConditionGroup
+    id: checkConfirmSave
+    conditions:
+      - id: userConfirmedSave
+        condition: =Topic.ConfirmSave == true
+        actions:
+          # ── Step 4: Save entry via API ──
+          - kind: InvokeHTTP
+            id: saveEntry
+            method: POST
+            url: "{System.ConnectorBaseUrl}/api/entries"
+            headers:
+              Content-Type: application/json
+            body: |
+              {
+                "title": "{Topic.EntryTitle}",
+                "content": "{Topic.EntryContent}"
+              }
+            responseVariable: Topic.SaveResponse
+            statusCodeVariable: Topic.SaveStatusCode
+
+          - kind: ConditionGroup
+            id: checkSaveResult
+            conditions:
+              - id: saveSuccess
+                condition: =Topic.SaveStatusCode == 201 || Topic.SaveStatusCode == 200
+                actions:
+                  - kind: SetVariable
+                    id: extractEntryId
+                    variable: Topic.EntryId
+                    value: =Topic.SaveResponse.id
+
+                  - kind: SendMessage
+                    id: sendSaveSuccess
+                    message: "Your entry has been saved successfully!"
+
+                  # ── Step 5: Offer analysis ──
+                  - kind: AskQuestion
+                    id: askAnalyze
+                    prompt: "Would you like me to analyze this entry for themes, sentiment, and insights?"
+                    variable: Topic.WantsAnalysis
+                    entity: BooleanEntity
+
+                  - kind: ConditionGroup
+                    id: checkWantsAnalysis
+                    conditions:
+                      - id: userWantsAnalysis
+                        condition: =Topic.WantsAnalysis == true
+                        actions:
+                          # ── Step 6: Analyze entry ──
+                          - kind: InvokeHTTP
+                            id: analyzeEntry
+                            method: POST
+                            url: "{System.ConnectorBaseUrl}/api/analyze"
+                            headers:
+                              Content-Type: application/json
+                            body: |
+                              {
+                                "entryId": "{Topic.EntryId}",
+                                "content": "{Topic.EntryContent}"
+                              }
+                            responseVariable: Topic.AnalysisResponse
+                            statusCodeVariable: Topic.AnalysisStatusCode
+
+                          - kind: ConditionGroup
+                            id: checkAnalysisResult
+                            conditions:
+                              - id: analysisSuccess
+                                condition: =Topic.AnalysisStatusCode == 200
+                                actions:
+                                  - kind: SendMessage
+                                    id: sendAnalysis
+                                    message: |
+                                      Here's what I found in your entry:
+
+                                      **Sentiment:** {Topic.AnalysisResponse.sentiment}
+
+                                      **Themes:** {Topic.AnalysisResponse.themes}
+
+                                      **Insights:** {Topic.AnalysisResponse.insights}
+
+                                      Keep writing — every entry helps build a richer picture of your journey.
+                            elseActions:
+                              - kind: SendMessage
+                                id: sendAnalysisFailed
+                                message: "I wasn't able to analyze your entry right now, but it's been saved. You can try again later."
+
+                    elseActions:
+                      - kind: SendMessage
+                        id: sendSkipAnalysis
+                        message: "No problem! Your entry is saved. You can always come back to reflect on it later."
+
+            elseActions:
+              - kind: SendMessage
+                id: sendSaveFailed
+                message: "Something went wrong while saving your entry. Please try again in a moment."
+
+    elseActions:
+      - kind: SendMessage
+        id: sendCancelSave
+        message: "No worries — your entry wasn't saved. You can start over anytime."
+
+  # ── Wrap up ──
+  - kind: SendMessage
+    id: sendClosing
+    message: "Is there anything else you'd like to do?"
+
+  - kind: RedirectToTopic
+    id: backToGreeting
+    topicId: greeting-and-routing

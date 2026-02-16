@@ -1,0 +1,178 @@
+kind: AdaptiveDialog
+modelDescription: Weekly recap with mood trends and highlights from journal entries.
+triggers:
+  - kind: OnRecognizedIntent
+    intent: WeeklyInsights
+    triggerQueries:
+      - "recap"
+      - "weekly"
+      - "insights"
+      - "mood trends"
+      - "how was my week"
+
+actions:
+  # ── Introduction ──
+  - kind: SendMessage
+    id: sendIntro
+    message: "Let me pull up your weekly recap and mood trends. One moment..."
+
+  # ── Fetch weekly recap ──
+  - kind: InvokeHTTP
+    id: callRecap
+    method: GET
+    url: "{System.ConnectorBaseUrl}/api/recap"
+    headers:
+      Content-Type: application/json
+    responseVariable: Topic.RecapResponse
+    statusCodeVariable: Topic.RecapStatusCode
+
+  # ── Handle recap response ──
+  - kind: ConditionGroup
+    id: checkRecapResult
+    conditions:
+      - id: recapSuccess
+        condition: =Topic.RecapStatusCode == 200
+        actions:
+          - kind: SendMessage
+            id: sendRecapHeader
+            message: |
+              **Your Weekly Recap**
+              __{Topic.RecapResponse.weekRange}__
+
+              ---
+
+          - kind: SendMessage
+            id: sendRecapSummary
+            message: |
+              **Summary**
+              {Topic.RecapResponse.summary}
+
+              **Entries this week:** {Topic.RecapResponse.entryCount}
+
+          # ── Display highlights ──
+          - kind: ConditionGroup
+            id: checkHighlights
+            conditions:
+              - id: hasHighlights
+                condition: =count(Topic.RecapResponse.highlights) > 0
+                actions:
+                  - kind: SendMessage
+                    id: sendHighlightsHeader
+                    message: |
+                      ---
+                      **Highlights**
+
+                  - kind: ForEach
+                    id: iterateHighlights
+                    collection: Topic.RecapResponse.highlights
+                    itemVariable: Topic.CurrentHighlight
+                    indexVariable: Topic.HighlightIndex
+                    actions:
+                      - kind: SendMessage
+                        id: sendHighlight
+                        message: |
+                          - **{Topic.CurrentHighlight.title}** ({Topic.CurrentHighlight.date}): {Topic.CurrentHighlight.excerpt}
+
+            elseActions:
+              - kind: SendMessage
+                id: sendNoHighlights
+                message: "No standout highlights this week. Keep writing and they'll emerge!"
+
+          # ── Fetch mood trends ──
+          - kind: SendMessage
+            id: sendMoodLoading
+            message: "Now let me check your mood trends..."
+
+          - kind: InvokeHTTP
+            id: callMoodTrends
+            method: GET
+            url: "{System.ConnectorBaseUrl}/api/insights/mood-trends"
+            headers:
+              Content-Type: application/json
+            responseVariable: Topic.MoodResponse
+            statusCodeVariable: Topic.MoodStatusCode
+
+          - kind: ConditionGroup
+            id: checkMoodResult
+            conditions:
+              - id: moodSuccess
+                condition: =Topic.MoodStatusCode == 200
+                actions:
+                  - kind: SendMessage
+                    id: sendMoodHeader
+                    message: |
+                      ---
+                      **Mood Trends**
+
+                  - kind: ConditionGroup
+                    id: checkMoodData
+                    conditions:
+                      - id: hasMoodData
+                        condition: =count(Topic.MoodResponse.moods) > 0
+                        actions:
+                          - kind: ForEach
+                            id: iterateMoods
+                            collection: Topic.MoodResponse.moods
+                            itemVariable: Topic.CurrentMood
+                            indexVariable: Topic.MoodIndex
+                            actions:
+                              - kind: SendMessage
+                                id: sendMood
+                                message: "- **{Topic.CurrentMood.mood}**: {Topic.CurrentMood.frequency} entries ({Topic.CurrentMood.percentage}%)"
+
+                          - kind: SendMessage
+                            id: sendMoodSummary
+                            message: |
+                              ---
+                              **Overall sentiment:** {Topic.MoodResponse.overallSentiment}
+
+                    elseActions:
+                      - kind: SendMessage
+                        id: sendNoMoodData
+                        message: "Not enough entries this week to identify mood trends. Try journaling a bit more this coming week!"
+
+            elseActions:
+              - kind: SendMessage
+                id: sendMoodError
+                message: "I couldn't retrieve mood trends right now, but your recap is above."
+
+    elseActions:
+      - kind: SendMessage
+        id: sendRecapError
+        message: |
+          I wasn't able to pull up your weekly recap. This might happen if you haven't written any entries this week yet.
+
+          Try writing a few entries and check back!
+
+  # ── Follow-up ──
+  - kind: AskQuestion
+    id: askFollowUp
+    prompt: |
+      What would you like to do next?
+      1. Write a journal entry
+      2. Reflect on a topic
+      3. Return to the main menu
+    variable: Topic.FollowUpChoice
+    entity: StringEntity
+
+  - kind: ConditionGroup
+    id: routeFollowUp
+    conditions:
+      - id: goJournal
+        condition: =contains(toLower(Topic.FollowUpChoice), '1') || contains(toLower(Topic.FollowUpChoice), 'write') || contains(toLower(Topic.FollowUpChoice), 'journal')
+        actions:
+          - kind: RedirectToTopic
+            id: goToJournal
+            topicId: guided-journaling
+
+      - id: goReflect
+        condition: =contains(toLower(Topic.FollowUpChoice), '2') || contains(toLower(Topic.FollowUpChoice), 'reflect')
+        actions:
+          - kind: RedirectToTopic
+            id: goToReflect
+            topicId: rag-reflection
+
+    elseActions:
+      - kind: RedirectToTopic
+        id: goToMenu
+        topicId: greeting-and-routing

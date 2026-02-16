@@ -1,0 +1,111 @@
+kind: AdaptiveDialog
+modelDescription: Welcome message and intent detection router for the Journal companion bot.
+triggers:
+  - kind: OnRecognizedIntent
+    intent: Greeting
+    triggerQueries:
+      - "hello"
+      - "hi"
+      - "start"
+      - "help"
+      - "what can you do"
+
+actions:
+  # ── Welcome message ──
+  - kind: SendMessage
+    id: sendWelcome
+    message: |
+      Welcome to your Journal Companion! I'm here to help you reflect, grow, and understand yourself better.
+
+      Here's what I can do:
+      - **Journal** — Create a new journal entry
+      - **Reflect** — Explore patterns and growth in your writing
+      - **Search** — Find past entries by meaning
+      - **Coaching** — Have a guided coaching conversation
+      - **Insights** — See your weekly recap and mood trends
+      - **Help** — Learn more about what I can do
+
+      What would you like to do?
+
+  # ── Collect user intent ──
+  - kind: AskQuestion
+    id: askIntent
+    prompt: "Please choose one of the options above, or just tell me what you'd like to do."
+    variable: Topic.UserIntent
+    entity: StringEntity
+
+  # ── Intent routing ──
+  - kind: ConditionGroup
+    id: routeIntent
+    conditions:
+      # Journal
+      - id: routeJournal
+        condition: =contains(toLower(Topic.UserIntent), 'journal') || contains(toLower(Topic.UserIntent), 'write') || contains(toLower(Topic.UserIntent), 'entry') || contains(toLower(Topic.UserIntent), 'log')
+        actions:
+          - kind: RedirectToTopic
+            id: goToJournal
+            topicId: guided-journaling
+
+      # Reflect
+      - id: routeReflect
+        condition: =contains(toLower(Topic.UserIntent), 'reflect') || contains(toLower(Topic.UserIntent), 'pattern') || contains(toLower(Topic.UserIntent), 'growth')
+        actions:
+          - kind: RedirectToTopic
+            id: goToReflect
+            topicId: rag-reflection
+
+      # Search
+      - id: routeSearch
+        condition: =contains(toLower(Topic.UserIntent), 'search') || contains(toLower(Topic.UserIntent), 'find') || contains(toLower(Topic.UserIntent), 'look') || contains(toLower(Topic.UserIntent), 'remember')
+        actions:
+          - kind: RedirectToTopic
+            id: goToSearch
+            topicId: semantic-search
+
+      # Coaching
+      - id: routeCoaching
+        condition: =contains(toLower(Topic.UserIntent), 'coach') || contains(toLower(Topic.UserIntent), 'advice')
+        actions:
+          - kind: RedirectToTopic
+            id: goToCoaching
+            topicId: coaching-session
+
+      # Insights
+      - id: routeInsights
+        condition: =contains(toLower(Topic.UserIntent), 'insight') || contains(toLower(Topic.UserIntent), 'recap') || contains(toLower(Topic.UserIntent), 'weekly') || contains(toLower(Topic.UserIntent), 'mood')
+        actions:
+          - kind: RedirectToTopic
+            id: goToInsights
+            topicId: weekly-insights
+
+      # Help
+      - id: routeHelp
+        condition: =contains(toLower(Topic.UserIntent), 'help')
+        actions:
+          - kind: SendMessage
+            id: sendHelp
+            message: |
+              Here's a detailed guide:
+
+              **Journal** — I'll walk you through creating a new entry with a title and content, then optionally analyze it for themes and sentiment.
+
+              **Reflect** — Tell me a topic and I'll search your past entries to surface patterns, growth areas, and actionable insights.
+
+              **Search** — Describe a memory or theme and I'll find your most relevant past entries using semantic search.
+
+              **Coaching** — We'll have a back-and-forth coaching conversation where I ask thoughtful questions and help you work through challenges.
+
+              **Insights** — I'll pull up your weekly recap, highlights, and mood trends so you can see how your week went.
+
+              What would you like to try?
+          - kind: RedirectToTopic
+            id: restartAfterHelp
+            topicId: greeting-and-routing
+
+    elseActions:
+      - kind: SendMessage
+        id: sendUnrecognized
+        message: "I didn't quite catch that. Let me show you the options again."
+      - kind: RedirectToTopic
+        id: restartAfterUnrecognized
+        topicId: greeting-and-routing

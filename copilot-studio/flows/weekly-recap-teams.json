@@ -1,0 +1,345 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "triggers": {
+    "Weekly_Friday_5PM": {
+      "type": "Recurrence",
+      "recurrence": {
+        "frequency": "Week",
+        "interval": 1,
+        "schedule": {
+          "hours": [17],
+          "minutes": [0],
+          "weekDays": ["Friday"]
+        },
+        "timeZone": "Eastern Standard Time"
+      }
+    }
+  },
+  "actions": {
+    "Scope_Generate_and_Send_Recap": {
+      "type": "Scope",
+      "actions": {
+        "Call_Recap_Endpoint": {
+          "type": "Http",
+          "inputs": {
+            "method": "GET",
+            "uri": "@{appsetting('CLEARMIND_API_BASE')}/api/recap",
+            "headers": {
+              "Authorization": "Bearer @{appsetting('CLEARMIND_API_KEY')}"
+            },
+            "queries": {
+              "period": "week"
+            }
+          },
+          "runAfter": {}
+        },
+        "Parse_Recap_Response": {
+          "type": "ParseJson",
+          "inputs": {
+            "content": "@body('Call_Recap_Endpoint')",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "summary": { "type": "string" },
+                "highlights": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "overallMood": { "type": "string" },
+                "entryCount": { "type": "integer" },
+                "streakDays": { "type": "integer" },
+                "suggestion": { "type": "string" },
+                "topThemes": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          },
+          "runAfter": {
+            "Call_Recap_Endpoint": ["Succeeded"]
+          }
+        },
+        "Compose_Highlights_List": {
+          "type": "Select",
+          "inputs": {
+            "from": "@body('Parse_Recap_Response')?['highlights']",
+            "select": {
+              "type": "TextBlock",
+              "text": "- @{item()}",
+              "wrap": true
+            }
+          },
+          "runAfter": {
+            "Parse_Recap_Response": ["Succeeded"]
+          }
+        },
+        "Compose_Adaptive_Card": {
+          "type": "Compose",
+          "inputs": {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.4",
+            "body": [
+              {
+                "type": "Container",
+                "style": "emphasis",
+                "items": [
+                  {
+                    "type": "ColumnSet",
+                    "columns": [
+                      {
+                        "type": "Column",
+                        "width": "auto",
+                        "items": [
+                          {
+                            "type": "Image",
+                            "url": "@{appsetting('CLEARMIND_APP_BASE')}/assets/recap-icon.png",
+                            "size": "Small"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "Column",
+                        "width": "stretch",
+                        "items": [
+                          {
+                            "type": "TextBlock",
+                            "text": "Your Weekly Journal Recap",
+                            "weight": "Bolder",
+                            "size": "Large"
+                          },
+                          {
+                            "type": "TextBlock",
+                            "text": "@{utcNow('MMMM dd, yyyy')}",
+                            "isSubtle": true,
+                            "spacing": "None"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "Container",
+                "items": [
+                  {
+                    "type": "TextBlock",
+                    "text": "Summary",
+                    "weight": "Bolder",
+                    "size": "Medium"
+                  },
+                  {
+                    "type": "TextBlock",
+                    "text": "@{body('Parse_Recap_Response')?['summary']}",
+                    "wrap": true
+                  }
+                ]
+              },
+              {
+                "type": "Container",
+                "items": [
+                  {
+                    "type": "TextBlock",
+                    "text": "Highlights",
+                    "weight": "Bolder",
+                    "size": "Medium",
+                    "spacing": "Medium"
+                  },
+                  {
+                    "type": "TextBlock",
+                    "text": "@{join(body('Parse_Recap_Response')?['highlights'], '\n- ')}",
+                    "wrap": true
+                  }
+                ]
+              },
+              {
+                "type": "FactSet",
+                "spacing": "Medium",
+                "facts": [
+                  {
+                    "title": "Overall Mood",
+                    "value": "@{body('Parse_Recap_Response')?['overallMood']}"
+                  },
+                  {
+                    "title": "Entries This Week",
+                    "value": "@{body('Parse_Recap_Response')?['entryCount']}"
+                  },
+                  {
+                    "title": "Current Streak",
+                    "value": "@{body('Parse_Recap_Response')?['streakDays']} days"
+                  }
+                ]
+              },
+              {
+                "type": "Container",
+                "style": "good",
+                "spacing": "Medium",
+                "items": [
+                  {
+                    "type": "TextBlock",
+                    "text": "Suggestion for Next Week",
+                    "weight": "Bolder"
+                  },
+                  {
+                    "type": "TextBlock",
+                    "text": "@{body('Parse_Recap_Response')?['suggestion']}",
+                    "wrap": true
+                  }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "type": "Action.OpenUrl",
+                "title": "View Full Recap",
+                "url": "@{appsetting('CLEARMIND_APP_BASE')}/recap/weekly"
+              },
+              {
+                "type": "Action.OpenUrl",
+                "title": "Start New Entry",
+                "url": "@{appsetting('CLEARMIND_APP_BASE')}/journal/new"
+              }
+            ]
+          },
+          "runAfter": {
+            "Compose_Highlights_List": ["Succeeded"]
+          }
+        },
+        "Post_Recap_Card_to_Teams": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['teams']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/v1.0/teams/@{appsetting('TEAMS_TEAM_ID')}/channels/@{appsetting('TEAMS_CHANNEL_ID')}/messages",
+            "body": {
+              "messageType": "message",
+              "body": {
+                "contentType": "html",
+                "content": "<attachment id=\"weekly-recap-card\"></attachment>"
+              },
+              "attachments": [
+                {
+                  "id": "weekly-recap-card",
+                  "contentType": "application/vnd.microsoft.card.adaptive",
+                  "content": "@outputs('Compose_Adaptive_Card')"
+                }
+              ]
+            }
+          },
+          "runAfter": {
+            "Compose_Adaptive_Card": ["Succeeded"]
+          }
+        }
+      },
+      "runAfter": {}
+    },
+    "Scope_Error_Handling": {
+      "type": "Scope",
+      "actions": {
+        "Compose_Error_Details": {
+          "type": "Compose",
+          "inputs": {
+            "flowName": "weekly-recap-teams",
+            "timestamp": "@utcNow()",
+            "error": "@result('Scope_Generate_and_Send_Recap')"
+          },
+          "runAfter": {}
+        },
+        "Post_Failure_Notification_to_Teams": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['teams']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/v1.0/teams/@{appsetting('TEAMS_TEAM_ID')}/channels/@{appsetting('TEAMS_CHANNEL_ID')}/messages",
+            "body": {
+              "messageType": "message",
+              "body": {
+                "contentType": "html",
+                "content": "<attachment id=\"error-card\"></attachment>"
+              },
+              "attachments": [
+                {
+                  "id": "error-card",
+                  "contentType": "application/vnd.microsoft.card.adaptive",
+                  "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": [
+                      {
+                        "type": "TextBlock",
+                        "text": "Weekly Recap Flow Failed",
+                        "weight": "Bolder",
+                        "size": "Large",
+                        "color": "Attention"
+                      },
+                      {
+                        "type": "TextBlock",
+                        "text": "The weekly journal recap flow encountered an error and could not complete.",
+                        "wrap": true
+                      },
+                      {
+                        "type": "FactSet",
+                        "facts": [
+                          {
+                            "title": "Flow",
+                            "value": "weekly-recap-teams"
+                          },
+                          {
+                            "title": "Timestamp",
+                            "value": "@{utcNow()}"
+                          }
+                        ]
+                      }
+                    ],
+                    "actions": [
+                      {
+                        "type": "Action.OpenUrl",
+                        "title": "View Flow Run History",
+                        "url": "https://make.powerautomate.com/environments/@{appsetting('POWER_PLATFORM_ENV_ID')}/flows"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "runAfter": {
+            "Compose_Error_Details": ["Succeeded"]
+          }
+        }
+      },
+      "runAfter": {
+        "Scope_Generate_and_Send_Recap": ["Failed", "TimedOut"]
+      }
+    }
+  },
+  "parameters": {
+    "$connections": {
+      "type": "Object",
+      "defaultValue": {
+        "teams": {
+          "connectionId": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/resourceGroups/@{appsetting('AZURE_RESOURCE_GROUP')}/providers/Microsoft.Web/connections/teams",
+          "connectionName": "teams",
+          "id": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/providers/Microsoft.Web/locations/@{appsetting('AZURE_LOCATION')}/managedApis/teams"
+        },
+        "clearmind": {
+          "connectionId": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/resourceGroups/@{appsetting('AZURE_RESOURCE_GROUP')}/providers/Microsoft.Web/connections/clearmind-connector",
+          "connectionName": "clearmind-connector",
+          "id": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/providers/Microsoft.Web/locations/@{appsetting('AZURE_LOCATION')}/managedApis/clearmind-connector"
+        }
+      }
+    }
+  }
+}

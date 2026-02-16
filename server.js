@@ -15,6 +15,7 @@ import {
   updateEntry as dbUpdateEntry, deleteEntry as dbDeleteEntry,
   getEntriesWithEmbeddings, getEntriesInDateRange, getAnalyzedEntries,
   updateEntryAnalysis,
+  findUserByAzureOid, createUserFromAzure,
 } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -118,6 +119,32 @@ if (process.env.DATABASE_URL && process.env.NODE_ENV !== 'test') {
 
 app.use(session(sessionConfig));
 
+// --- Azure AD auth (feature-flagged) ---
+const ENABLE_AZURE_AUTH = process.env.ENABLE_AZURE_AUTH === 'true';
+
+if (ENABLE_AZURE_AUTH) {
+  const { azureAuthMiddleware } = await import('./microsoft/auth.js');
+  app.use(azureAuthMiddleware);
+}
+
+/**
+ * Resolves an Azure AD user to a local user ID.
+ * Auto-provisions a local account on first authentication.
+ */
+async function resolveAzureUserToLocal(azureUser) {
+  let user = await findUserByAzureOid(azureUser.oid);
+  if (!user) {
+    const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    user = await createUserFromAzure({
+      id,
+      email: azureUser.email || `${azureUser.oid}@azure`,
+      name: azureUser.name,
+      azureOid: azureUser.oid,
+    });
+  }
+  return user.id;
+}
+
 /*
  * Poor man's text embeddings — we hash character trigrams into a fixed-size
  * vector so we can do similarity search without calling an external API.
@@ -188,11 +215,23 @@ export async function groqChat(messages, options = {}) {
   return _groqChat(messages, options);
 }
 
-function requireAuth(req, res, next) {
-  if (!req.session.userId) {
-    return res.status(401).json({ error: 'Not authenticated' });
+async function requireAuth(req, res, next) {
+  // Path 1: Session auth (existing web UI)
+  if (req.session.userId) {
+    req.authUserId = req.session.userId;
+    return next();
   }
-  next();
+  // Path 2: Azure AD Bearer (Copilot Studio / Power Automate)
+  if (req.azureUser) {
+    try {
+      req.authUserId = await resolveAzureUserToLocal(req.azureUser);
+      return next();
+    } catch (err) {
+      console.error('Azure user resolution failed:', err);
+      return res.status(500).json({ error: 'Failed to resolve Azure user' });
+    }
+  }
+  return res.status(401).json({ error: 'Not authenticated' });
 }
 
 // health check for Render
@@ -276,7 +315,7 @@ app.post('/api/entries', requireAuth, async (req, res) => {
     const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
     const entry = await dbCreateEntry({
       id,
-      userId: req.session.userId,
+      userId: req.authUserId,
       title: title || 'Untitled Entry',
       content: content.trim(),
       embedding: getEmbedding(content),
@@ -291,7 +330,7 @@ app.post('/api/entries', requireAuth, async (req, res) => {
 
 app.get('/api/entries', requireAuth, async (req, res) => {
   try {
-    const entries = await dbGetEntries(req.session.userId);
+    const entries = await dbGetEntries(req.authUserId);
     res.json({ entries });
   } catch (error) {
     console.error('Get entries error:', error);
@@ -301,7 +340,7 @@ app.get('/api/entries', requireAuth, async (req, res) => {
 
 app.get('/api/entries/:id', requireAuth, async (req, res) => {
   try {
-    const entry = await dbGetEntryById(req.session.userId, req.params.id);
+    const entry = await dbGetEntryById(req.authUserId, req.params.id);
     if (!entry) return res.status(404).json({ error: 'Entry not found' });
     res.json({ entry });
   } catch (error) {
@@ -320,7 +359,7 @@ app.put('/api/entries/:id', requireAuth, async (req, res) => {
     }
     if (title !== undefined) updates.title = title;
 
-    const entry = await dbUpdateEntry(req.session.userId, req.params.id, updates);
+    const entry = await dbUpdateEntry(req.authUserId, req.params.id, updates);
     if (!entry) return res.status(404).json({ error: 'Entry not found' });
     res.json({ entry });
   } catch (error) {
@@ -331,7 +370,7 @@ app.put('/api/entries/:id', requireAuth, async (req, res) => {
 
 app.delete('/api/entries/:id', requireAuth, async (req, res) => {
   try {
-    const deleted = await dbDeleteEntry(req.session.userId, req.params.id);
+    const deleted = await dbDeleteEntry(req.authUserId, req.params.id);
     if (!deleted) return res.status(404).json({ error: 'Entry not found' });
     res.json({ success: true });
   } catch (error) {
@@ -347,7 +386,7 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
     const { content, entryId } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const systemPrompt = `You are a personal growth journal analyst. Analyze this journal entry from a university student or recent graduate. Return JSON only:
 {
   "mood": "one word mood (e.g. excited, frustrated, focused, anxious, confident, neutral)",
@@ -368,7 +407,7 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
 
     // persist analysis on the entry if we have an id
     if (entryId) {
-      await updateEntryAnalysis(req.session.userId, entryId, {
+      await updateEntryAnalysis(req.authUserId, entryId, {
         mood: analysis.mood,
         tags: analysis.tags,
         summary: analysis.summary,
@@ -387,7 +426,7 @@ app.post('/api/clarity', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const systemPrompt = `You are a thoughtful personal growth coach. Based on this journal entry, provide a brief reflection and 3 clarifying questions to help the writer think deeper. Return JSON only:
 {
   "reflection": "A 2-3 sentence thoughtful reflection on what they wrote",
@@ -418,7 +457,7 @@ app.post('/api/search', requireAuth, async (req, res) => {
     const { query } = req.body;
     if (!query) return res.status(400).json({ error: 'Query is required' });
 
-    const entries = await getEntriesWithEmbeddings(req.session.userId);
+    const entries = await getEntriesWithEmbeddings(req.authUserId);
     const queryEmbedding = getEmbedding(query);
 
     const results = entries
@@ -449,7 +488,7 @@ app.post('/api/reflect', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const entries = await getEntriesWithEmbeddings(req.session.userId);
+    const entries = await getEntriesWithEmbeddings(req.authUserId);
     const queryEmbedding = getEmbedding(content);
 
     // grab the 5 most similar past entries for context
@@ -469,7 +508,7 @@ app.post('/api/reflect', requireAuth, async (req, res) => {
       ? `\n\nRelated past entries:\n${related.map((r, i) => `[${i + 1}] (${new Date(r.date).toLocaleDateString()}, mood: ${r.mood || 'unknown'}): ${r.content.substring(0, 300)}`).join('\n')}`
       : '';
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const systemPrompt = `You are a personal growth coach with access to the writer's journal history. Based on their current entry and related past entries, provide a reflection that connects patterns and tracks growth. Return JSON only:
 {
   "reflection": "A thoughtful 3-4 sentence reflection connecting current entry to past patterns",
@@ -502,7 +541,7 @@ app.post('/api/reflect', requireAuth, async (req, res) => {
 app.get('/api/recap', requireAuth, async (req, res) => {
   try {
     const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const weekEntries = await getEntriesInDateRange(req.session.userId, oneWeekAgo, new Date());
+    const weekEntries = await getEntriesInDateRange(req.authUserId, oneWeekAgo, new Date());
 
     if (weekEntries.length === 0) {
       return res.json({ recap: { summary: 'No entries this week. Start journaling to get your weekly recap!', highlights: [], mood: 'N/A' } });
@@ -512,7 +551,7 @@ app.get('/api/recap', requireAuth, async (req, res) => {
       `[${new Date(e.created_at).toLocaleDateString()}] ${e.summary || e.content.substring(0, 200)}`
     ).join('\n');
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const systemPrompt = `You are a personal growth coach. Summarize this person's week based on their journal entries. Return JSON only:
 {
   "summary": "3-4 sentence overview of their week",
@@ -543,7 +582,7 @@ app.get('/api/recap', requireAuth, async (req, res) => {
 
 app.get('/api/insights/mood-trends', requireAuth, async (req, res) => {
   try {
-    const entries = await dbGetEntries(req.session.userId);
+    const entries = await dbGetEntries(req.authUserId);
 
     // only entries that have been through analysis have moods
     const moodEntries = entries
@@ -573,7 +612,7 @@ app.get('/api/insights/mood-trends', requireAuth, async (req, res) => {
 
 app.post('/api/insights/growth-patterns', requireAuth, async (req, res) => {
   try {
-    const analyzed = await getAnalyzedEntries(req.session.userId);
+    const analyzed = await getAnalyzedEntries(req.authUserId);
 
     if (analyzed.length < 2) {
       return res.json({
@@ -590,7 +629,7 @@ app.post('/api/insights/growth-patterns', requireAuth, async (req, res) => {
       `[${new Date(e.created_at).toLocaleDateString()}] mood: ${e.mood || 'unknown'}, tags: ${(e.tags || []).join(', ')}, summary: ${e.summary || e.content.substring(0, 200)}`
     ).join('\n');
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const systemPrompt = `You are a personal growth analyst. Analyze all of this person's journal entries to identify long-term patterns. Return JSON only:
 {
   "growthAreas": ["specific area where the person has grown over time"],
@@ -605,7 +644,7 @@ Provide 2-3 items for each array. Be specific and reference actual patterns from
       { role: 'user', content: `All journal entries:\n${context}` }
     ], { temperature: 0.7, max_tokens: 1024, _apiKey: apiKey });
 
-    console.log('[growth-patterns] generated for', req.session.userId);
+    console.log('[growth-patterns] generated for', req.authUserId);
 
     const patterns = safeParseJson(response);
     if (!patterns) {
@@ -626,7 +665,7 @@ app.post('/api/stream/analyze', requireAuth, async (req, res) => {
     const { content, entryId } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const systemPrompt = `You are a personal growth journal analyst. Analyze this journal entry from a university student or recent graduate. Return JSON only:
 {
   "mood": "one word mood",
@@ -653,7 +692,7 @@ app.post('/api/stream/analyze', requireAuth, async (req, res) => {
     const analysis = safeParseJson(full);
     if (analysis) {
       if (entryId) {
-        await updateEntryAnalysis(req.session.userId, entryId, {
+        await updateEntryAnalysis(req.authUserId, entryId, {
           mood: analysis.mood,
           tags: analysis.tags,
           summary: analysis.summary,
@@ -673,7 +712,7 @@ app.post('/api/stream/clarity', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const systemPrompt = `You are a thoughtful personal growth coach. Based on this journal entry, provide a brief reflection and 3 clarifying questions. Return JSON only:
 {
   "reflection": "A 2-3 sentence thoughtful reflection",
@@ -709,7 +748,7 @@ app.post('/api/stream/reflect', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const entries = await getEntriesWithEmbeddings(req.session.userId);
+    const entries = await getEntriesWithEmbeddings(req.authUserId);
     const queryEmbedding = getEmbedding(content);
 
     const related = entries
@@ -728,7 +767,7 @@ app.post('/api/stream/reflect', requireAuth, async (req, res) => {
       ? `\n\nRelated past entries:\n${related.map((r, i) => `[${i + 1}] (${new Date(r.date).toLocaleDateString()}, mood: ${r.mood || 'unknown'}): ${r.content.substring(0, 300)}`).join('\n')}`
       : '';
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const systemPrompt = `You are a personal growth coach with access to the writer's journal history. Based on their current entry and related past entries, provide a reflection that connects patterns and tracks growth. Return JSON only:
 {
   "reflection": "A thoughtful 3-4 sentence reflection",
@@ -812,10 +851,10 @@ app.post('/api/coach', requireAuth, async (req, res) => {
     }
 
     const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
-    const context = await buildCoachContextWithRAG(req.session.userId, lastUserMsg?.content);
+    const context = await buildCoachContextWithRAG(req.authUserId, lastUserMsg?.content);
     const trimmed = messages.slice(-20);
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const response = await groqChat([
       { role: 'system', content: COACH_SYSTEM(context) },
       ...trimmed
@@ -836,10 +875,10 @@ app.post('/api/stream/coach', requireAuth, async (req, res) => {
     }
 
     const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
-    const context = await buildCoachContextWithRAG(req.session.userId, lastUserMsg?.content);
+    const context = await buildCoachContextWithRAG(req.authUserId, lastUserMsg?.content);
     const trimmed = messages.slice(-20);
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const sse = initSSE(res);
     let full = '';
     try {
@@ -867,7 +906,7 @@ app.post('/api/stream/coach', requireAuth, async (req, res) => {
 
 app.get('/api/prompts', requireAuth, async (req, res) => {
   try {
-    const entries = await dbGetEntries(req.session.userId);
+    const entries = await dbGetEntries(req.authUserId);
     const recent = entries.slice(0, 15);
 
     if (recent.length === 0) {
@@ -892,7 +931,7 @@ app.get('/api/prompts', requireAuth, async (req, res) => {
     const topTags = Object.entries(tags).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t]) => t);
     const recentMoods = moods.slice(0, 5);
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const systemPrompt = `Generate 3 personalized journal prompts for a university student or recent graduate. Their recent topics: ${topTags.join(', ')}. Recent moods: ${recentMoods.join(', ')}. Recent summaries: ${summaries.slice(0, 5).join(' | ')}
 
 Suggest prompts that explore areas NOT already covered. Return JSON only:
@@ -938,7 +977,7 @@ app.post('/api/time-capsule', requireAuth, async (req, res) => {
     const weekMs = 7 * 24 * 60 * 60 * 1000;
 
     const recentEntries = await getEntriesInDateRange(
-      req.session.userId,
+      req.authUserId,
       new Date(now - weekMs),
       now
     );
@@ -946,7 +985,7 @@ app.post('/api/time-capsule', requireAuth, async (req, res) => {
     const pastCenter = new Date(now - daysAgo * 24 * 60 * 60 * 1000);
     const pastStart = new Date(pastCenter - weekMs / 2);
     const pastEnd = new Date(pastCenter.getTime() + weekMs / 2);
-    const pastEntries = await getEntriesInDateRange(req.session.userId, pastStart, pastEnd);
+    const pastEntries = await getEntriesInDateRange(req.authUserId, pastStart, pastEnd);
 
     if (recentEntries.length === 0 && pastEntries.length === 0) {
       return res.json({
@@ -961,7 +1000,7 @@ app.post('/api/time-capsule', requireAuth, async (req, res) => {
       `[${new Date(e.created_at).toLocaleDateString()}] mood: ${e.mood || 'unknown'} | ${e.summary || e.content.substring(0, 200)}`
     ).join('\n');
 
-    const apiKey = await resolveApiKey(req.session.userId);
+    const apiKey = await resolveApiKey(req.authUserId);
     const systemPrompt = `Compare two periods of a person's journal. "Then" is from ${daysAgo} days ago, "Now" is the past week. Return JSON only:
 {
   "narrative": "3-5 sentence second-person growth story",
@@ -1000,7 +1039,7 @@ app.post('/api/settings/api-key', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'API key is required' });
     }
 
-    await setUserApiKey(req.session.userId, apiKey.trim());
+    await setUserApiKey(req.authUserId, apiKey.trim());
     res.json({ success: true });
   } catch (error) {
     console.error('Save API key error:', error);
@@ -1010,11 +1049,95 @@ app.post('/api/settings/api-key', requireAuth, async (req, res) => {
 
 // quick check so the frontend knows whether to show the setup banner
 app.get('/api/settings/has-key', requireAuth, async (req, res) => {
-  const userKey = await getUserApiKey(req.session.userId);
+  const userKey = await getUserApiKey(req.authUserId);
   const envKey = process.env.GROQ_API_KEY || '';
   const hasKey = !!(userKey || envKey);
   res.json({ hasKey });
 });
+
+// --- Microsoft Graph calendar context (feature-flagged) ---
+
+if (process.env.ENABLE_GRAPH_INTEGRATION === 'true') {
+  const { getUserCalendarEvents, getUserPresence, formatCalendarContext } = await import('./microsoft/graph.js');
+
+  app.get('/api/context/calendar', requireAuth, async (req, res) => {
+    try {
+      if (!req.azureUser) {
+        return res.status(400).json({ error: 'Calendar context requires Azure AD authentication' });
+      }
+      const events = await getUserCalendarEvents(req.azureUser.oid);
+      const presence = await getUserPresence(req.azureUser.oid);
+      res.json({
+        events,
+        presence,
+        formatted: formatCalendarContext(events, presence),
+      });
+    } catch (error) {
+      console.error('Calendar context error:', error);
+      res.status(500).json({ error: 'Failed to fetch calendar context' });
+    }
+  });
+}
+
+// --- Dataverse sync endpoints (feature-flagged) ---
+
+if (process.env.ENABLE_DATAVERSE_SYNC === 'true') {
+  const { syncEntryToDataverse } = await import('./microsoft/dataverse.js');
+  const { getUnsyncedEntries, markEntrySynced } = await import('./db.js');
+
+  app.post('/api/dataverse/sync', requireAuth, async (req, res) => {
+    try {
+      const unsynced = await getUnsyncedEntries(req.authUserId);
+      const results = { synced: 0, errors: [] };
+
+      for (const entry of unsynced) {
+        try {
+          const dataverseId = await syncEntryToDataverse(entry);
+          await markEntrySynced(entry.id, dataverseId);
+          results.synced++;
+        } catch (err) {
+          results.errors.push({ entryId: entry.id, error: err.message });
+        }
+      }
+
+      res.json(results);
+    } catch (error) {
+      console.error('Dataverse sync error:', error);
+      res.status(500).json({ error: 'Sync failed' });
+    }
+  });
+
+  app.get('/api/dataverse/status', requireAuth, async (req, res) => {
+    try {
+      const pool = getPool();
+      const total = await pool.query(
+        'SELECT COUNT(*) FROM entries WHERE user_id = $1', [req.authUserId]
+      );
+      const synced = await pool.query(
+        'SELECT COUNT(*) FROM entries WHERE user_id = $1 AND dataverse_synced_at IS NOT NULL', [req.authUserId]
+      );
+      const lastSync = await pool.query(
+        'SELECT MAX(dataverse_synced_at) as last_sync FROM entries WHERE user_id = $1', [req.authUserId]
+      );
+
+      res.json({
+        totalEntries: parseInt(total.rows[0].count),
+        syncedEntries: parseInt(synced.rows[0].count),
+        lastSync: lastSync.rows[0].last_sync,
+      });
+    } catch (error) {
+      console.error('Dataverse status error:', error);
+      res.status(500).json({ error: 'Failed to get sync status' });
+    }
+  });
+}
+
+// --- Power Automate webhooks (feature-flagged) ---
+
+if (process.env.ENABLE_WEBHOOKS === 'true') {
+  const { default: webhookRouter } = await import('./microsoft/webhooks.js');
+  app.use('/api/webhooks', webhookRouter);
+}
 
 // boot the server
 

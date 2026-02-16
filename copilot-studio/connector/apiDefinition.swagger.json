@@ -1,0 +1,631 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "ClearMind AI",
+    "description": "AI-powered journaling companion with mood analysis, coaching, and intelligent search. Integrates with Microsoft 365 via Copilot Studio and Power Automate.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "ClearMind AI Support",
+      "url": "https://your-app.azurewebsites.net"
+    }
+  },
+  "host": "your-app.azurewebsites.net",
+  "basePath": "/",
+  "schemes": [
+    "https"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "securityDefinitions": {
+    "oauth2-auth": {
+      "type": "oauth2",
+      "flow": "accessCode",
+      "authorizationUrl": "https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/authorize",
+      "tokenUrl": "https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/token",
+      "scopes": {
+        "api://your-client-id/Journal.ReadWrite": "Read and write journal entries",
+        "api://your-client-id/Analysis.Read": "Read AI analysis results"
+      }
+    }
+  },
+  "security": [
+    {
+      "oauth2-auth": [
+        "api://your-client-id/Journal.ReadWrite"
+      ]
+    }
+  ],
+  "paths": {
+    "/api/entries": {
+      "get": {
+        "operationId": "ListEntries",
+        "summary": "List journal entries",
+        "description": "Retrieve a paginated list of journal entries for the authenticated user.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "type": "integer",
+            "default": 20,
+            "description": "Maximum number of entries to return.",
+            "x-ms-visibility": "advanced"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "type": "integer",
+            "default": 0,
+            "description": "Number of entries to skip for pagination.",
+            "x-ms-visibility": "advanced"
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "type": "string",
+            "format": "date",
+            "description": "Filter entries created on or after this date (YYYY-MM-DD).",
+            "x-ms-visibility": "advanced"
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "type": "string",
+            "format": "date",
+            "description": "Filter entries created on or before this date (YYYY-MM-DD).",
+            "x-ms-visibility": "advanced"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of journal entries.",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/JournalEntry"
+                  }
+                },
+                "total": {
+                  "type": "integer",
+                  "description": "Total number of entries matching the filter."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. Token is missing or invalid."
+          }
+        }
+      },
+      "post": {
+        "operationId": "CreateEntry",
+        "summary": "Create a journal entry",
+        "description": "Create a new journal entry for the authenticated user. The entry will be automatically analyzed for mood if analysis is enabled.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "content"
+              ],
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "Title of the journal entry.",
+                  "x-ms-visibility": "important"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "The full text content of the journal entry.",
+                  "x-ms-visibility": "important"
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Optional tags to categorize the entry.",
+                  "x-ms-visibility": "advanced"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The newly created journal entry.",
+            "schema": {
+              "$ref": "#/definitions/JournalEntry"
+            }
+          },
+          "400": {
+            "description": "Bad request. Content is required."
+          },
+          "401": {
+            "description": "Unauthorized."
+          }
+        }
+      }
+    },
+    "/api/entries/{id}": {
+      "get": {
+        "operationId": "GetEntry",
+        "summary": "Get a journal entry",
+        "description": "Retrieve a single journal entry by its ID.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "The unique identifier of the journal entry.",
+            "x-ms-visibility": "important"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requested journal entry.",
+            "schema": {
+              "$ref": "#/definitions/JournalEntry"
+            }
+          },
+          "404": {
+            "description": "Entry not found."
+          }
+        }
+      },
+      "put": {
+        "operationId": "UpdateEntry",
+        "summary": "Update a journal entry",
+        "description": "Update the content, title, or tags of an existing journal entry.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "The unique identifier of the journal entry.",
+            "x-ms-visibility": "important"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "Updated title."
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Updated content."
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Updated tags."
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated journal entry.",
+            "schema": {
+              "$ref": "#/definitions/JournalEntry"
+            }
+          },
+          "404": {
+            "description": "Entry not found."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "DeleteEntry",
+        "summary": "Delete a journal entry",
+        "description": "Permanently delete a journal entry by its ID.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "The unique identifier of the journal entry.",
+            "x-ms-visibility": "important"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Entry deleted successfully."
+          },
+          "404": {
+            "description": "Entry not found."
+          }
+        }
+      }
+    },
+    "/api/entries/{id}/analyze": {
+      "post": {
+        "operationId": "AnalyzeEntry",
+        "summary": "Analyze a journal entry",
+        "description": "Run AI-powered mood and sentiment analysis on a journal entry. Returns mood classification, sentiment score, key themes, and actionable suggestions.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "The unique identifier of the journal entry to analyze.",
+            "x-ms-visibility": "important"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Analysis results for the journal entry.",
+            "schema": {
+              "$ref": "#/definitions/AnalysisResult"
+            }
+          },
+          "404": {
+            "description": "Entry not found."
+          },
+          "503": {
+            "description": "AI analysis service is temporarily unavailable."
+          }
+        }
+      }
+    },
+    "/api/search": {
+      "get": {
+        "operationId": "SearchEntries",
+        "summary": "Search journal entries",
+        "description": "Perform a semantic search across journal entries using natural language queries. Returns ranked results with relevance scores.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "description": "Natural language search query (e.g., 'times I felt anxious about work').",
+            "x-ms-visibility": "important"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "type": "integer",
+            "default": 10,
+            "description": "Maximum number of results to return.",
+            "x-ms-visibility": "advanced"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results ranked by relevance.",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/SearchResult"
+                  }
+                },
+                "query": {
+                  "type": "string",
+                  "description": "The original search query."
+                },
+                "totalResults": {
+                  "type": "integer",
+                  "description": "Total number of matching results."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request. Query parameter is required."
+          }
+        }
+      }
+    },
+    "/api/coach": {
+      "post": {
+        "operationId": "GetCoachingResponse",
+        "summary": "Get AI coaching response",
+        "description": "Send a message to the AI coaching assistant. The coach provides supportive, evidence-based guidance informed by the user's journal history.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": [
+                "message"
+              ],
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "description": "The user's message to the AI coach.",
+                  "x-ms-visibility": "important"
+                },
+                "conversationId": {
+                  "type": "string",
+                  "description": "Optional conversation ID to continue a previous coaching session.",
+                  "x-ms-visibility": "advanced"
+                },
+                "includeJournalContext": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Whether to include recent journal entries as context for the coaching response.",
+                  "x-ms-visibility": "advanced"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The AI coaching response.",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "response": {
+                  "type": "string",
+                  "description": "The coach's response message."
+                },
+                "conversationId": {
+                  "type": "string",
+                  "description": "Conversation ID for continuing this session."
+                },
+                "suggestedActions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Suggested follow-up actions or prompts."
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "AI coaching service is temporarily unavailable."
+          }
+        }
+      }
+    },
+    "/api/recap": {
+      "get": {
+        "operationId": "GetRecap",
+        "summary": "Get journal recap",
+        "description": "Generate an AI-powered summary and insights recap for a specified time period. Includes mood trends, key themes, and personalized observations.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "enum": [
+              "daily",
+              "weekly",
+              "monthly"
+            ],
+            "description": "The time period for the recap.",
+            "x-ms-visibility": "important"
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "type": "string",
+            "format": "date",
+            "description": "The reference date for the recap period (defaults to today).",
+            "x-ms-visibility": "advanced"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The generated recap.",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "period": {
+                  "type": "string",
+                  "description": "The recap period."
+                },
+                "startDate": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "Start date of the recap period."
+                },
+                "endDate": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "End date of the recap period."
+                },
+                "summary": {
+                  "type": "string",
+                  "description": "AI-generated narrative summary of the period."
+                },
+                "moodTrend": {
+                  "type": "string",
+                  "description": "Overall mood trend description."
+                },
+                "keyThemes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Key themes identified across entries."
+                },
+                "entryCount": {
+                  "type": "integer",
+                  "description": "Number of entries in the recap period."
+                },
+                "averageSentiment": {
+                  "type": "number",
+                  "format": "float",
+                  "description": "Average sentiment score for the period (-1.0 to 1.0)."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request. Period parameter is required."
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "JournalEntry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the journal entry."
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the journal entry."
+        },
+        "content": {
+          "type": "string",
+          "description": "Full text content of the journal entry."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags categorizing the entry."
+        },
+        "mood": {
+          "type": "string",
+          "enum": [
+            "happy",
+            "calm",
+            "neutral",
+            "anxious",
+            "sad",
+            "angry",
+            "excited",
+            "grateful",
+            "frustrated",
+            "hopeful"
+          ],
+          "description": "AI-detected mood classification."
+        },
+        "sentimentScore": {
+          "type": "number",
+          "format": "float",
+          "description": "Sentiment score ranging from -1.0 (very negative) to 1.0 (very positive)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the entry was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the entry was last updated."
+        }
+      }
+    },
+    "AnalysisResult": {
+      "type": "object",
+      "properties": {
+        "entryId": {
+          "type": "string",
+          "description": "The ID of the analyzed journal entry."
+        },
+        "mood": {
+          "type": "string",
+          "description": "Primary mood classification."
+        },
+        "sentimentScore": {
+          "type": "number",
+          "format": "float",
+          "description": "Sentiment score from -1.0 to 1.0."
+        },
+        "themes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Key themes identified in the entry."
+        },
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Actionable suggestions based on the entry content."
+        },
+        "confidence": {
+          "type": "number",
+          "format": "float",
+          "description": "Confidence score of the analysis (0.0 to 1.0)."
+        },
+        "analyzedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the analysis was performed."
+        }
+      }
+    },
+    "SearchResult": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "$ref": "#/definitions/JournalEntry"
+        },
+        "relevanceScore": {
+          "type": "number",
+          "format": "float",
+          "description": "Relevance score from 0.0 to 1.0 indicating how well the entry matches the query."
+        },
+        "matchedSnippet": {
+          "type": "string",
+          "description": "A text snippet from the entry highlighting the relevant match."
+        }
+      }
+    }
+  },
+  "x-ms-connector-metadata": [
+    {
+      "propertyName": "Website",
+      "propertyValue": "https://your-app.azurewebsites.net"
+    },
+    {
+      "propertyName": "Privacy policy",
+      "propertyValue": "https://your-app.azurewebsites.net/privacy"
+    },
+    {
+      "propertyName": "Categories",
+      "propertyValue": "Lifestyle and Entertainment;Productivity"
+    }
+  ]
+}

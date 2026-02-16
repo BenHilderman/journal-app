@@ -1,0 +1,126 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "triggers": {
+    "When_journaling_session_starts": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "method": "POST",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "userOid": { "type": "string" }
+          },
+          "required": ["userOid"]
+        }
+      }
+    }
+  },
+  "actions": {
+    "Get_Calendar_Context": {
+      "type": "Http",
+      "inputs": {
+        "method": "GET",
+        "uri": "@{appsetting('CLEARMIND_API_BASE')}/api/context/calendar",
+        "headers": {
+          "Authorization": "Bearer @{appsetting('CLEARMIND_API_KEY')}"
+        },
+        "queries": {
+          "userOid": "@triggerBody()?['userOid']"
+        }
+      },
+      "runAfter": {}
+    },
+    "Parse_Calendar_Events": {
+      "type": "ParseJson",
+      "inputs": {
+        "content": "@body('Get_Calendar_Context')",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "subject": { "type": "string" },
+                  "start": { "type": "string" },
+                  "end": { "type": "string" },
+                  "isAllDay": { "type": "boolean" },
+                  "organizer": { "type": "string" },
+                  "importance": { "type": "string" }
+                }
+              }
+            },
+            "presence": {
+              "type": "object",
+              "properties": {
+                "availability": { "type": "string" },
+                "activity": { "type": "string" }
+              }
+            },
+            "eventCount": { "type": "integer" }
+          }
+        }
+      },
+      "runAfter": {
+        "Get_Calendar_Context": ["Succeeded"]
+      }
+    },
+    "Build_Event_List_String": {
+      "type": "Select",
+      "inputs": {
+        "from": "@body('Parse_Calendar_Events')?['events']",
+        "select": "@concat(item()?['subject'], ' (', item()?['start'], ' - ', item()?['end'], ')')"
+      },
+      "runAfter": {
+        "Parse_Calendar_Events": ["Succeeded"]
+      }
+    },
+    "Format_Context_String": {
+      "type": "Compose",
+      "inputs": "@if(equals(body('Parse_Calendar_Events')?['eventCount'], 0), concat('You have no meetings scheduled for today. Your current status is ', body('Parse_Calendar_Events')?['presence']?['availability'], '.'), concat('You have ', string(body('Parse_Calendar_Events')?['eventCount']), ' meetings today: ', join(body('Build_Event_List_String'), '; '), '. Your current status is ', body('Parse_Calendar_Events')?['presence']?['availability'], '.'))",
+      "runAfter": {
+        "Build_Event_List_String": ["Succeeded"]
+      }
+    },
+    "Respond_With_Context": {
+      "type": "Response",
+      "kind": "Http",
+      "inputs": {
+        "statusCode": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "context": "@outputs('Format_Context_String')",
+          "eventCount": "@body('Parse_Calendar_Events')?['eventCount']",
+          "presence": "@body('Parse_Calendar_Events')?['presence']?['availability']",
+          "userOid": "@triggerBody()?['userOid']",
+          "timestamp": "@utcNow()"
+        }
+      },
+      "runAfter": {
+        "Format_Context_String": ["Succeeded"]
+      }
+    }
+  },
+  "parameters": {
+    "$connections": {
+      "type": "Object",
+      "defaultValue": {
+        "teams": {
+          "connectionId": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/resourceGroups/@{appsetting('AZURE_RESOURCE_GROUP')}/providers/Microsoft.Web/connections/teams",
+          "connectionName": "teams",
+          "id": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/providers/Microsoft.Web/locations/@{appsetting('AZURE_LOCATION')}/managedApis/teams"
+        },
+        "clearmind": {
+          "connectionId": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/resourceGroups/@{appsetting('AZURE_RESOURCE_GROUP')}/providers/Microsoft.Web/connections/clearmind-connector",
+          "connectionName": "clearmind-connector",
+          "id": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/providers/Microsoft.Web/locations/@{appsetting('AZURE_LOCATION')}/managedApis/clearmind-connector"
+        }
+      }
+    }
+  }
+}

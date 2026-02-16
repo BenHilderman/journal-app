@@ -1,0 +1,139 @@
+kind: AdaptiveDialog
+modelDescription: Semantic search across journal entries to find past writing by meaning and context.
+triggers:
+  - kind: OnRecognizedIntent
+    intent: SemanticSearch
+    triggerQueries:
+      - "search"
+      - "find"
+      - "look for"
+      - "remember when"
+
+actions:
+  # ── Introduction ──
+  - kind: SendMessage
+    id: sendIntro
+    message: |
+      I can search your journal entries by meaning, not just keywords. Describe what you're looking for and I'll find the most relevant entries.
+
+  # ── Collect search query ──
+  - kind: AskQuestion
+    id: askSearchQuery
+    prompt: |
+      What would you like to search for? You can describe a feeling, event, theme, or memory.
+
+      Examples:
+      - "times I felt proud of myself"
+      - "entries about my morning routine"
+      - "when I was stressed about work"
+      - "thoughts about the future"
+    variable: Topic.SearchQuery
+    entity: StringEntity
+
+  - kind: SendMessage
+    id: sendSearching
+    message: "Searching your entries for: **{Topic.SearchQuery}**..."
+
+  # ── Call search API ──
+  - kind: InvokeHTTP
+    id: callSearch
+    method: POST
+    url: "{System.ConnectorBaseUrl}/api/search"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "query": "{Topic.SearchQuery}"
+      }
+    responseVariable: Topic.SearchResponse
+    statusCodeVariable: Topic.SearchStatusCode
+
+  # ── Handle response ──
+  - kind: ConditionGroup
+    id: checkSearchResult
+    conditions:
+      - id: searchSuccess
+        condition: =Topic.SearchStatusCode == 200
+        actions:
+          # ── Check if results exist ──
+          - kind: ConditionGroup
+            id: checkResultsExist
+            conditions:
+              - id: hasResults
+                condition: =count(Topic.SearchResponse.results) > 0
+                actions:
+                  - kind: SendMessage
+                    id: sendResultsHeader
+                    message: |
+                      I found **{count(Topic.SearchResponse.results)}** relevant entries:
+
+                  # ── Display results using ForEach ──
+                  - kind: ForEach
+                    id: iterateResults
+                    collection: Topic.SearchResponse.results
+                    itemVariable: Topic.CurrentResult
+                    indexVariable: Topic.ResultIndex
+                    actions:
+                      - kind: SendMessage
+                        id: sendResult
+                        message: |
+                          ---
+                          **{Topic.ResultIndex + 1}. {Topic.CurrentResult.title}**
+                          Date: {Topic.CurrentResult.date}
+                          Relevance: {Topic.CurrentResult.similarityScore}%
+
+                          > {Topic.CurrentResult.snippet}
+
+                  - kind: SendMessage
+                    id: sendResultsFooter
+                    message: "---"
+
+            elseActions:
+              - kind: SendMessage
+                id: sendNoResults
+                message: |
+                  I didn't find any entries matching that description. This could mean:
+                  - You haven't written about this topic yet
+                  - Try rephrasing your search with different words
+
+          # ── Offer follow-up ──
+          - kind: AskQuestion
+            id: askFollowUp
+            prompt: |
+              What would you like to do next?
+              1. Search for something else
+              2. Write a new journal entry
+              3. Return to the main menu
+            variable: Topic.FollowUpChoice
+            entity: StringEntity
+
+          - kind: ConditionGroup
+            id: routeFollowUp
+            conditions:
+              - id: searchAgain
+                condition: =contains(toLower(Topic.FollowUpChoice), '1') || contains(toLower(Topic.FollowUpChoice), 'search') || contains(toLower(Topic.FollowUpChoice), 'another') || contains(toLower(Topic.FollowUpChoice), 'else')
+                actions:
+                  - kind: RedirectToTopic
+                    id: restartSearch
+                    topicId: semantic-search
+
+              - id: writeEntry
+                condition: =contains(toLower(Topic.FollowUpChoice), '2') || contains(toLower(Topic.FollowUpChoice), 'write') || contains(toLower(Topic.FollowUpChoice), 'journal')
+                actions:
+                  - kind: RedirectToTopic
+                    id: goToJournal
+                    topicId: guided-journaling
+
+            elseActions:
+              - kind: RedirectToTopic
+                id: goToMenu
+                topicId: greeting-and-routing
+
+    elseActions:
+      - kind: SendMessage
+        id: sendSearchError
+        message: "I wasn't able to search your entries right now. Please try again in a moment."
+
+      - kind: RedirectToTopic
+        id: backToMenuOnError
+        topicId: greeting-and-routing

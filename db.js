@@ -23,9 +23,12 @@ export async function initDB() {
       name TEXT,
       password TEXT NOT NULL,
       api_key TEXT,
+      azure_oid TEXT UNIQUE,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+  // Additive migration for existing databases
+  await p.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS azure_oid TEXT UNIQUE`).catch(() => {});
   await p.query(`
     CREATE TABLE IF NOT EXISTS entries (
       id TEXT PRIMARY KEY,
@@ -38,10 +41,15 @@ export async function initDB() {
       encouragement TEXT,
       analyzed_at TIMESTAMPTZ,
       embedding JSONB,
+      dataverse_id TEXT,
+      dataverse_synced_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+  // Additive migrations for existing databases
+  await p.query(`ALTER TABLE entries ADD COLUMN IF NOT EXISTS dataverse_id TEXT`).catch(() => {});
+  await p.query(`ALTER TABLE entries ADD COLUMN IF NOT EXISTS dataverse_synced_at TIMESTAMPTZ`).catch(() => {});
   await p.query(`
     CREATE TABLE IF NOT EXISTS config (
       key TEXT PRIMARY KEY,
@@ -206,5 +214,43 @@ export async function setConfig(key, value) {
     `INSERT INTO config (key, value) VALUES ($1, $2)
      ON CONFLICT (key) DO UPDATE SET value = $2`,
     [key, value]
+  );
+}
+
+// --- Azure AD Users ---
+
+export async function findUserByAzureOid(oid) {
+  const { rows } = await getPool().query(
+    'SELECT * FROM users WHERE azure_oid = $1', [oid]
+  );
+  return rows[0] || null;
+}
+
+export async function createUserFromAzure({ id, email, name, azureOid }) {
+  const { rows } = await getPool().query(
+    `INSERT INTO users (id, email, name, password, azure_oid)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, email, name, azure_oid, created_at`,
+    [id, email, name, 'azure-sso-no-password', azureOid]
+  );
+  return rows[0];
+}
+
+// --- Dataverse Sync ---
+
+export async function getUnsyncedEntries(userId) {
+  const { rows } = await getPool().query(
+    `SELECT id, title, content, mood, tags, summary, encouragement, created_at, updated_at
+     FROM entries WHERE user_id = $1 AND dataverse_synced_at IS NULL
+     ORDER BY created_at DESC`,
+    [userId]
+  );
+  return rows;
+}
+
+export async function markEntrySynced(entryId, dataverseId) {
+  await getPool().query(
+    `UPDATE entries SET dataverse_id = $1, dataverse_synced_at = NOW() WHERE id = $2`,
+    [dataverseId, entryId]
   );
 }

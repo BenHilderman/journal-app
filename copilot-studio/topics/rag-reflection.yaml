@@ -1,0 +1,120 @@
+kind: AdaptiveDialog
+modelDescription: Pattern-aware reflection using RAG to surface insights from past journal entries.
+triggers:
+  - kind: OnRecognizedIntent
+    intent: RAGReflection
+    triggerQueries:
+      - "reflect"
+      - "patterns"
+      - "how am I doing"
+      - "growth"
+
+actions:
+  # ── Introduction ──
+  - kind: SendMessage
+    id: sendIntro
+    message: |
+      Let's take a moment to reflect. I'll look through your past entries to find patterns, growth, and insights related to whatever is on your mind.
+
+  # ── Collect reflection topic ──
+  - kind: AskQuestion
+    id: askReflectionTopic
+    prompt: |
+      What would you like to reflect on? This could be a theme, emotion, goal, or anything you've been thinking about.
+
+      Examples: "my anxiety", "career progress", "relationships", "self-confidence", "gratitude"
+    variable: Topic.ReflectionTopic
+    entity: StringEntity
+
+  - kind: SendMessage
+    id: sendSearching
+    message: "Searching through your journal for patterns related to **{Topic.ReflectionTopic}**..."
+
+  # ── Call reflection API ──
+  - kind: InvokeHTTP
+    id: callReflect
+    method: POST
+    url: "{System.ConnectorBaseUrl}/api/reflect"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "topic": "{Topic.ReflectionTopic}"
+      }
+    responseVariable: Topic.ReflectResponse
+    statusCodeVariable: Topic.ReflectStatusCode
+
+  # ── Handle response ──
+  - kind: ConditionGroup
+    id: checkReflectResult
+    conditions:
+      - id: reflectSuccess
+        condition: =Topic.ReflectStatusCode == 200
+        actions:
+          # ── Display reflection ──
+          - kind: SendMessage
+            id: sendReflection
+            message: |
+              **Reflection on: {Topic.ReflectionTopic}**
+
+              ---
+
+              **Summary**
+              {Topic.ReflectResponse.reflection}
+
+              ---
+
+              **Patterns Identified**
+              {Topic.ReflectResponse.patterns}
+
+              ---
+
+              **Growth Areas**
+              {Topic.ReflectResponse.growthAreas}
+
+              ---
+
+          # ── Offer follow-up options ──
+          - kind: AskQuestion
+            id: askFollowUp
+            prompt: |
+              What would you like to do next?
+              1. Reflect on a different topic
+              2. Write a journal entry about this
+              3. Return to the main menu
+            variable: Topic.FollowUpChoice
+            entity: StringEntity
+
+          - kind: ConditionGroup
+            id: routeFollowUp
+            conditions:
+              - id: reflectAgain
+                condition: =contains(toLower(Topic.FollowUpChoice), '1') || contains(toLower(Topic.FollowUpChoice), 'different') || contains(toLower(Topic.FollowUpChoice), 'another')
+                actions:
+                  - kind: RedirectToTopic
+                    id: restartReflection
+                    topicId: rag-reflection
+
+              - id: writeEntry
+                condition: =contains(toLower(Topic.FollowUpChoice), '2') || contains(toLower(Topic.FollowUpChoice), 'journal') || contains(toLower(Topic.FollowUpChoice), 'write')
+                actions:
+                  - kind: RedirectToTopic
+                    id: goToJournal
+                    topicId: guided-journaling
+
+            elseActions:
+              - kind: RedirectToTopic
+                id: goToMenu
+                topicId: greeting-and-routing
+
+    elseActions:
+      - kind: SendMessage
+        id: sendReflectFailed
+        message: |
+          I wasn't able to generate a reflection right now. This might happen if you don't have enough journal entries yet, or if there was a temporary issue.
+
+          Try writing a few entries first, then come back to reflect!
+
+      - kind: RedirectToTopic
+        id: backToMenuOnError
+        topicId: greeting-and-routing

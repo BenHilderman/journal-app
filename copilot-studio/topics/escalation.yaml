@@ -1,0 +1,97 @@
+kind: AdaptiveDialog
+modelDescription: Crisis detection and mental health resource escalation. Provides empathetic response and connects users with professional support resources.
+triggers:
+  - kind: OnRecognizedIntent
+    intent: CrisisEscalation
+    priority: High
+    triggerQueries:
+      - "help me"
+      - "crisis"
+      - "emergency"
+      - "suicidal"
+      - "self-harm"
+      - "hurt myself"
+
+actions:
+  # ── Empathetic acknowledgment ──
+  - kind: SendMessage
+    id: sendEmpathy
+    message: |
+      I hear you, and I want you to know that what you're feeling matters. You're not alone in this.
+
+      I'm not a crisis counselor, but I want to make sure you have access to people who can truly help right now.
+
+  # ── Crisis resources ──
+  - kind: SendMessage
+    id: sendResources
+    message: |
+      **Immediate Support Resources**
+
+      ---
+
+      **988 Suicide & Crisis Lifeline**
+      - Call or text: **988**
+      - Available 24/7, free and confidential
+      - Website: [988lifeline.org](https://988lifeline.org)
+
+      ---
+
+      **Crisis Text Line**
+      - Text **HELLO** to **741741**
+      - Available 24/7, free and confidential
+      - Trained crisis counselors respond via text
+
+      ---
+
+      **International Association for Suicide Prevention**
+      - Find a crisis center in your country: [https://www.iasp.info/resources/Crisis_Centres/](https://www.iasp.info/resources/Crisis_Centres/)
+
+      ---
+
+      **Emergency Services**
+      - If you are in immediate danger, please call **911** (US) or your local emergency number.
+
+  # ── Offer human connection ──
+  - kind: AskQuestion
+    id: askHumanSupport
+    prompt: |
+      Would you like me to help connect you with a human support agent? They can talk with you directly.
+    variable: Topic.WantsHumanSupport
+    entity: BooleanEntity
+
+  - kind: ConditionGroup
+    id: checkHumanSupport
+    conditions:
+      - id: wantsHuman
+        condition: =Topic.WantsHumanSupport == true
+        actions:
+          - kind: SendMessage
+            id: sendConnecting
+            message: "I'm connecting you with a support agent now. Please stay on the line — someone will be with you shortly."
+
+          - kind: TransferToAgent
+            id: transferToAgent
+            message: "User has indicated they are in crisis and has requested human support. Please handle with care and urgency."
+
+    elseActions:
+      - kind: SendMessage
+        id: sendStayingSafe
+        message: |
+          That's completely okay. The resources above are available anytime — day or night. You don't have to go through this alone.
+
+          Here are a few things that might help right now:
+          - Take slow, deep breaths (in for 4 counts, hold for 4, out for 4)
+          - Reach out to someone you trust — a friend, family member, or counselor
+          - If things feel overwhelming, please don't hesitate to call or text the numbers above
+
+  # ── Closing care message ──
+  - kind: SendMessage
+    id: sendClosing
+    message: |
+      You matter. Your feelings are valid. And reaching out — even to a bot — takes courage.
+
+      Please take care of yourself. I'll be here whenever you need me.
+
+  # ── End conversation gracefully (do not redirect to menu) ──
+  - kind: EndConversation
+    id: endConversation

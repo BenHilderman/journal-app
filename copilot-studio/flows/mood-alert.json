@@ -1,0 +1,241 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "triggers": {
+    "When_mood_check_requested": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "method": "POST",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "userId": { "type": "string" }
+          },
+          "required": ["userId"]
+        }
+      }
+    }
+  },
+  "actions": {
+    "Get_Mood_Trends": {
+      "type": "Http",
+      "inputs": {
+        "method": "GET",
+        "uri": "@{appsetting('CLEARMIND_API_BASE')}/api/insights/mood-trends",
+        "headers": {
+          "Authorization": "Bearer @{appsetting('CLEARMIND_API_KEY')}"
+        },
+        "queries": {
+          "userId": "@triggerBody()?['userId']"
+        }
+      },
+      "runAfter": {}
+    },
+    "Parse_Mood_Trends": {
+      "type": "ParseJson",
+      "inputs": {
+        "content": "@body('Get_Mood_Trends')",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "userId": { "type": "string" },
+            "timeline": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "date": { "type": "string" },
+                  "mood": { "type": "string" },
+                  "sentiment": { "type": "number" },
+                  "entryId": { "type": "string" }
+                }
+              }
+            },
+            "averageSentiment": { "type": "number" },
+            "dominantMood": { "type": "string" }
+          }
+        }
+      },
+      "runAfter": {
+        "Get_Mood_Trends": ["Succeeded"]
+      }
+    },
+    "Get_Last_3_Entries": {
+      "type": "Compose",
+      "inputs": "@take(body('Parse_Mood_Trends')?['timeline'], 3)",
+      "runAfter": {
+        "Parse_Mood_Trends": ["Succeeded"]
+      }
+    },
+    "Count_Consecutive_Negative": {
+      "type": "Compose",
+      "inputs": "@length(filter(outputs('Get_Last_3_Entries'), item(), or(equals(item()?['mood'], 'anxious'), equals(item()?['mood'], 'sad'), equals(item()?['mood'], 'depressed'), equals(item()?['mood'], 'overwhelmed'), equals(item()?['mood'], 'frustrated'))))",
+      "runAfter": {
+        "Get_Last_3_Entries": ["Succeeded"]
+      }
+    },
+    "Check_Consecutive_Negative_Threshold": {
+      "type": "If",
+      "expression": {
+        "greaterOrEquals": ["@outputs('Count_Consecutive_Negative')", 3]
+      },
+      "actions": {
+        "Post_Wellness_CheckIn_to_Teams": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['teams']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/v1.0/teams/@{appsetting('TEAMS_TEAM_ID')}/channels/@{appsetting('TEAMS_CHANNEL_ID')}/messages",
+            "body": {
+              "messageType": "message",
+              "body": {
+                "contentType": "html",
+                "content": "<attachment id=\"mood-alert-card\"></attachment>"
+              },
+              "attachments": [
+                {
+                  "id": "mood-alert-card",
+                  "contentType": "application/vnd.microsoft.card.adaptive",
+                  "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": [
+                      {
+                        "type": "Container",
+                        "style": "attention",
+                        "items": [
+                          {
+                            "type": "TextBlock",
+                            "text": "Wellness Check-In Recommended",
+                            "weight": "Bolder",
+                            "size": "Large",
+                            "color": "Attention"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "TextBlock",
+                        "text": "A user has logged @{outputs('Count_Consecutive_Negative')} consecutive entries with negative mood indicators. A supportive check-in may be beneficial.",
+                        "wrap": true,
+                        "spacing": "Medium"
+                      },
+                      {
+                        "type": "FactSet",
+                        "facts": [
+                          {
+                            "title": "User ID",
+                            "value": "@{triggerBody()?['userId']}"
+                          },
+                          {
+                            "title": "Consecutive Negative Moods",
+                            "value": "@{outputs('Count_Consecutive_Negative')}"
+                          },
+                          {
+                            "title": "Most Recent Mood",
+                            "value": "@{first(outputs('Get_Last_3_Entries'))?['mood']}"
+                          },
+                          {
+                            "title": "Detection Time",
+                            "value": "@{utcNow()}"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "TextBlock",
+                        "text": "Consider reaching out with empathy and offering access to wellness coaching resources.",
+                        "wrap": true,
+                        "isSubtle": true,
+                        "spacing": "Medium"
+                      }
+                    ],
+                    "actions": [
+                      {
+                        "type": "Action.OpenUrl",
+                        "title": "View Mood Trends",
+                        "url": "@{appsetting('CLEARMIND_APP_BASE')}/users/@{triggerBody()?['userId']}/insights"
+                      },
+                      {
+                        "type": "Action.OpenUrl",
+                        "title": "Open Coaching Portal",
+                        "url": "@{appsetting('CLEARMIND_APP_BASE')}/coaching?userId=@{triggerBody()?['userId']}"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "runAfter": {}
+        },
+        "Respond_Alert_True": {
+          "type": "Response",
+          "kind": "Http",
+          "inputs": {
+            "statusCode": 200,
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body": {
+              "alert": true,
+              "consecutiveNegative": "@outputs('Count_Consecutive_Negative')",
+              "userId": "@triggerBody()?['userId']",
+              "notificationSent": true,
+              "timestamp": "@utcNow()"
+            }
+          },
+          "runAfter": {
+            "Post_Wellness_CheckIn_to_Teams": ["Succeeded"]
+          }
+        }
+      },
+      "else": {
+        "actions": {
+          "Respond_Alert_False": {
+            "type": "Response",
+            "kind": "Http",
+            "inputs": {
+              "statusCode": 200,
+              "headers": {
+                "Content-Type": "application/json"
+              },
+              "body": {
+                "alert": false,
+                "consecutiveNegative": "@outputs('Count_Consecutive_Negative')",
+                "userId": "@triggerBody()?['userId']",
+                "notificationSent": false,
+                "timestamp": "@utcNow()"
+              }
+            },
+            "runAfter": {}
+          }
+        }
+      },
+      "runAfter": {
+        "Count_Consecutive_Negative": ["Succeeded"]
+      }
+    }
+  },
+  "parameters": {
+    "$connections": {
+      "type": "Object",
+      "defaultValue": {
+        "teams": {
+          "connectionId": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/resourceGroups/@{appsetting('AZURE_RESOURCE_GROUP')}/providers/Microsoft.Web/connections/teams",
+          "connectionName": "teams",
+          "id": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/providers/Microsoft.Web/locations/@{appsetting('AZURE_LOCATION')}/managedApis/teams"
+        },
+        "clearmind": {
+          "connectionId": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/resourceGroups/@{appsetting('AZURE_RESOURCE_GROUP')}/providers/Microsoft.Web/connections/clearmind-connector",
+          "connectionName": "clearmind-connector",
+          "id": "/subscriptions/@{appsetting('AZURE_SUBSCRIPTION_ID')}/providers/Microsoft.Web/locations/@{appsetting('AZURE_LOCATION')}/managedApis/clearmind-connector"
+        }
+      }
+    }
+  }
+}
