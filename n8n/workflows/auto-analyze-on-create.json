@@ -1,0 +1,102 @@
+{
+  "name": "ClearMind — Auto-Analyze on Entry Create",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clearmind-entry-created",
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      },
+      "id": "webhook-trigger",
+      "name": "Entry Created Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.CLEARMIND_API_BASE }}/api/analyze",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-N8N-API-Key", "value": "={{ $env.CLEARMIND_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "entryId", "value": "={{ $json.entryId }}" },
+            { "name": "content", "value": "={{ $json.contentPreview }}" },
+            { "name": "userId", "value": "={{ $json.userId }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "analyze-entry",
+      "name": "Call /api/analyze",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.analysis?.mood }}",
+              "operation": "regex",
+              "value2": "anxious|frustrated|burned out|overwhelmed|depressed"
+            }
+          ]
+        }
+      },
+      "id": "check-severe-mood",
+      "name": "Severe Mood?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "message": "=ClearMind Alert: Entry {{ $node['Entry Created Webhook'].json.entryId }} analyzed with mood '{{ $json.analysis?.mood }}'. Consider checking in with the user.",
+        "additionalFields": {}
+      },
+      "id": "send-notification",
+      "name": "Send Notification",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1000, 200],
+      "notes": "Replace with your preferred notification node (Slack, Email, etc.)"
+    },
+    {
+      "parameters": {},
+      "id": "no-action",
+      "name": "No Action",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1000, 400]
+    }
+  ],
+  "connections": {
+    "Entry Created Webhook": {
+      "main": [
+        [{ "node": "Call /api/analyze", "type": "main", "index": 0 }]
+      ]
+    },
+    "Call /api/analyze": {
+      "main": [
+        [{ "node": "Severe Mood?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Severe Mood?": {
+      "main": [
+        [{ "node": "Send Notification", "type": "main", "index": 0 }],
+        [{ "node": "No Action", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "ClearMindAI" }]
+}

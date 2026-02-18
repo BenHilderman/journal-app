@@ -187,6 +187,14 @@ async function requireAuth(req, res, next) {
       return res.status(500).json({ error: 'Failed to resolve Azure user' });
     }
   }
+  // Path 3: n8n API key (workflow callbacks)
+  if (process.env.ENABLE_N8N === 'true') {
+    const n8nKey = req.headers['x-n8n-api-key'];
+    if (n8nKey && n8nKey === process.env.N8N_CALLBACK_API_KEY) {
+      req.authUserId = req.body?.userId || req.query?.userId;
+      if (req.authUserId) return next();
+    }
+  }
   return res.status(401).json({ error: 'Not authenticated' });
 }
 
@@ -278,6 +286,18 @@ app.post('/api/entries', requireAuth, async (req, res) => {
     });
 
     res.json({ entry });
+
+    // n8n event (non-blocking, after response sent)
+    if (process.env.ENABLE_N8N === 'true') {
+      import('./n8n/emitter.js').then(({ emitN8nEvent }) =>
+        emitN8nEvent('entry.created', {
+          entryId: id,
+          userId: req.authUserId,
+          title: title || 'Untitled Entry',
+          contentPreview: content.trim().substring(0, 200),
+        })
+      );
+    }
   } catch (error) {
     console.error('Create entry error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -329,6 +349,16 @@ app.delete('/api/entries/:id', requireAuth, async (req, res) => {
     const deleted = await dbDeleteEntry(req.authUserId, req.params.id);
     if (!deleted) return res.status(404).json({ error: 'Entry not found' });
     res.json({ success: true });
+
+    // n8n event (non-blocking)
+    if (process.env.ENABLE_N8N === 'true') {
+      import('./n8n/emitter.js').then(({ emitN8nEvent }) =>
+        emitN8nEvent('entry.deleted', {
+          entryId: req.params.id,
+          userId: req.authUserId,
+        })
+      );
+    }
   } catch (error) {
     console.error('Delete entry error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -362,6 +392,19 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
     }
 
     res.json({ analysis, agent: 'Mood Analyst' });
+
+    // n8n event (non-blocking, after response sent)
+    if (process.env.ENABLE_N8N === 'true') {
+      import('./n8n/emitter.js').then(({ emitN8nEvent }) =>
+        emitN8nEvent('entry.analyzed', {
+          entryId: entryId || null,
+          userId: req.authUserId,
+          mood: analysis.mood,
+          tags: analysis.tags,
+          summary: analysis.summary,
+        })
+      );
+    }
   } catch (error) {
     console.error('Analysis error:', error);
     res.status(500).json({ error: 'Analysis failed' });
@@ -1253,6 +1296,13 @@ if (process.env.ENABLE_DATAVERSE_SYNC === 'true') {
 if (process.env.ENABLE_WEBHOOKS === 'true') {
   const { default: webhookRouter } = await import('./microsoft/webhooks.js');
   app.use('/api/webhooks', webhookRouter);
+}
+
+// --- n8n workflow automation (feature-flagged) ---
+
+if (process.env.ENABLE_N8N === 'true') {
+  const { default: n8nRouter } = await import('./n8n/routes.js');
+  app.use('/api/n8n', n8nRouter);
 }
 
 // boot the server

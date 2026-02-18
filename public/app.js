@@ -293,6 +293,8 @@ async function showMainScreen() {
   });
   // check if the user needs to set up their api key
   if (window._checkApiKey) window._checkApiKey();
+  // check n8n status
+  checkN8nStatus();
 }
 
 // tracks whether the user has a groq api key configured
@@ -446,6 +448,31 @@ function updateProviderBadge() {
   if (dot) {
     dot.classList.toggle('active', hasApiKey);
   }
+}
+
+// n8n status indicator
+async function checkN8nStatus() {
+  try {
+    const res = await fetch('/api/n8n/status');
+    if (!res.ok) { hideN8nIndicator(); return; }
+    const data = await res.json();
+    const indicator = document.getElementById('n8nIndicator');
+    const dot = document.querySelector('.n8n-dot');
+    if (!indicator) return;
+    if (data.n8nEnabled) {
+      indicator.style.display = 'inline-flex';
+      if (dot) dot.classList.toggle('active', data.n8nConfigured);
+    } else {
+      indicator.style.display = 'none';
+    }
+  } catch {
+    hideN8nIndicator();
+  }
+}
+
+function hideN8nIndicator() {
+  const indicator = document.getElementById('n8nIndicator');
+  if (indicator) indicator.style.display = 'none';
 }
 
 // check if already logged in on page load

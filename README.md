@@ -27,6 +27,24 @@ Browser → Express Routes → ADK Runner → Agent Pipeline → LLM (Groq or Ge
 
 Supports **Groq** (Llama 3.1, free tier) and **Google Gemini**. Switch providers in-app via the settings modal.
 
+## Workflow Automation (n8n)
+
+Optional self-hosted workflow engine — replaces Power Automate with an open-source alternative.
+
+```bash
+# Start n8n (Docker)
+docker compose -f docker-compose.n8n.yml up -d
+# → http://localhost:5678
+```
+
+Pre-built workflow templates in `n8n/workflows/`:
+- **Auto-Analyze**: Triggers analysis on new entries, alerts on severe mood
+- **Weekly Recap**: Friday digest with AI summary
+- **Mood Monitor**: Daily check for 3+ consecutive negative moods
+- **Monthly Growth**: Growth pattern report on 1st of each month
+
+Set `ENABLE_N8N=true` and `N8N_CALLBACK_API_KEY` in `.env`. See [docs/n8n-setup.md](docs/n8n-setup.md) for full setup guide.
+
 ## Tech
 
 | | |
@@ -102,11 +120,19 @@ ClearMindAI/
 ├── server.js              # Express routes, auth, ADK integration
 ├── utils.js               # Shared utilities (embeddings, JSON parsing)
 ├── db.js                  # PostgreSQL schema + helpers
+├── n8n/                   # n8n workflow automation
+│   ├── emitter.js         # Event emitter (fire-and-forget to n8n)
+│   ├── routes.js          # Express router (status, config, test)
+│   └── workflows/         # Importable n8n workflow templates
 ├── public/
 │   ├── index.html         # SPA shell
 │   ├── app.js             # Frontend logic, SVG charts
 │   └── styles.css         # Beige theme
 ├── tests/
-│   └── server.test.js
+│   ├── server.test.js
+│   └── n8n.test.js
+├── docs/
+│   └── n8n-setup.md       # n8n setup guide
+├── docker-compose.n8n.yml # Docker Compose for self-hosted n8n
 └── .github/workflows/ci.yml
 ```

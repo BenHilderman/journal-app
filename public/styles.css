@@ -3557,3 +3557,33 @@ body::after {
 .provider-option:hover:not(.active) {
   color: var(--text);
 }
+
+/* header n8n indicator */
+.n8n-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.7rem;
+  color: var(--text-3);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  background: var(--brown-light);
+  padding: 4px 10px;
+  border-radius: 12px;
+  margin-right: 6px;
+}
+
+.n8n-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+
+.n8n-dot.active {
+  background: #ff6d00;
+  box-shadow: 0 0 6px rgba(255, 109, 0, 0.5);
+}

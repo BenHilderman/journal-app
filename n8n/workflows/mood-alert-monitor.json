@@ -1,0 +1,108 @@
+{
+  "name": "ClearMind — Daily Mood Alert Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 9 * * *" }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every Day 9 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.CLEARMIND_API_BASE }}/api/insights/mood-trends",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-N8N-API-Key", "value": "={{ $env.CLEARMIND_API_KEY }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "userId", "value": "={{ $env.CLEARMIND_USER_ID || 'default' }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-mood-trends",
+      "name": "GET /api/insights/mood-trends",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const timeline = items[0].json.timeline || [];\nconst negativeMoods = ['anxious', 'frustrated', 'tired', 'overwhelmed', 'burned out', 'stressed', 'depressed', 'stuck', 'discouraged'];\n\n// Check last 3 entries\nconst recent = timeline.slice(-3);\nconst consecutiveNegative = recent.length >= 3 && recent.every(e => negativeMoods.includes((e.mood || '').toLowerCase()));\n\nreturn [{ json: { consecutiveNegative, recentMoods: recent.map(e => e.mood), total: timeline.length } }];"
+      },
+      "id": "check-consecutive",
+      "name": "Check 3+ Negative",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{ $json.consecutiveNegative }}", "value2": true }
+          ]
+        }
+      },
+      "id": "should-alert",
+      "name": "Should Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {},
+      "id": "send-alert",
+      "name": "Send Alert",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1250, 200],
+      "notes": "Replace with your preferred notification node (Slack, Email, SMS, etc.)"
+    },
+    {
+      "parameters": {},
+      "id": "no-alert",
+      "name": "All Good",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1250, 400]
+    }
+  ],
+  "connections": {
+    "Every Day 9 AM": {
+      "main": [
+        [{ "node": "GET /api/insights/mood-trends", "type": "main", "index": 0 }]
+      ]
+    },
+    "GET /api/insights/mood-trends": {
+      "main": [
+        [{ "node": "Check 3+ Negative", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check 3+ Negative": {
+      "main": [
+        [{ "node": "Should Alert?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Should Alert?": {
+      "main": [
+        [{ "node": "Send Alert", "type": "main", "index": 0 }],
+        [{ "node": "All Good", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "ClearMindAI" }]
+}

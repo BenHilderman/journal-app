@@ -1,0 +1,92 @@
+{
+  "name": "ClearMind — Weekly Recap Digest",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 17 * * 5" }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every Friday 5 PM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.CLEARMIND_API_BASE }}/api/recap",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-N8N-API-Key", "value": "={{ $env.CLEARMIND_API_KEY }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "userId", "value": "={{ $env.CLEARMIND_USER_ID || 'default' }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-recap",
+      "name": "GET /api/recap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "subject",
+              "value": "=Your Weekly ClearMind Recap"
+            },
+            {
+              "name": "body",
+              "value": "=Weekly Recap ({{ $json.entryCount }} entries)\n\n{{ $json.recap?.summary }}\n\nHighlights:\n{{ ($json.recap?.highlights || []).join('\\n- ') }}\n\nSuggested Focus:\n{{ $json.recap?.suggestion }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format-email",
+      "name": "Format Email",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {},
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1000, 300],
+      "notes": "Replace with Send Email node configured with your SMTP or email service"
+    }
+  ],
+  "connections": {
+    "Every Friday 5 PM": {
+      "main": [
+        [{ "node": "GET /api/recap", "type": "main", "index": 0 }]
+      ]
+    },
+    "GET /api/recap": {
+      "main": [
+        [{ "node": "Format Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Email": {
+      "main": [
+        [{ "node": "Send Email", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "ClearMindAI" }]
+}

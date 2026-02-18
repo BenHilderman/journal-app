@@ -1,0 +1,94 @@
+{
+  "name": "ClearMind — Monthly Growth Digest",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 10 1 * *" }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "1st of Month 10 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.CLEARMIND_API_BASE }}/api/insights/growth-patterns",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-N8N-API-Key", "value": "={{ $env.CLEARMIND_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "userId", "value": "={{ $env.CLEARMIND_USER_ID || 'default' }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-growth",
+      "name": "POST /api/insights/growth-patterns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "subject",
+              "value": "=Your Monthly ClearMind Growth Report"
+            },
+            {
+              "name": "body",
+              "value": "=Monthly Growth Report\n\nGrowth Areas:\n{{ ($json.patterns?.growthAreas || []).map((g, i) => `${i+1}. ${g}`).join('\\n') }}\n\nBlind Spots:\n{{ ($json.patterns?.blindSpots || []).map((b, i) => `${i+1}. ${b}`).join('\\n') }}\n\nRecurring Themes:\n{{ ($json.patterns?.recurringThemes || []).map((t, i) => `${i+1}. ${t}`).join('\\n') }}\n\nSuggestion:\n{{ $json.patterns?.suggestion }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format-email",
+      "name": "Format Email",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {},
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1000, 300],
+      "notes": "Replace with Send Email node configured with your SMTP or email service"
+    }
+  ],
+  "connections": {
+    "1st of Month 10 AM": {
+      "main": [
+        [{ "node": "POST /api/insights/growth-patterns", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST /api/insights/growth-patterns": {
+      "main": [
+        [{ "node": "Format Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Email": {
+      "main": [
+        [{ "node": "Send Email", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "ClearMindAI" }]
+}
