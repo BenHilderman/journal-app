@@ -253,6 +253,9 @@ describe('Auth Guarding', () => {
       { method: 'post', path: '/api/stream/coach' },
       { method: 'post', path: '/api/settings/api-key' },
       { method: 'get', path: '/api/settings/has-key' },
+      { method: 'post', path: '/api/export/summary' },
+      { method: 'get', path: '/api/export/markdown' },
+      { method: 'get', path: '/api/export/pdf' },
     ];
 
     for (const route of routes) {
@@ -590,5 +593,92 @@ describe('Time Capsule', () => {
     expect(res.body.constants).toBeDefined();
     expect(res.body.then.entries).toBeGreaterThanOrEqual(1);
     expect(res.body.now.entries).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// export endpoints
+
+describe('Export', () => {
+  afterEach(async () => {
+    setGroqChat(async () => '{}');
+    await cleanup();
+  });
+
+  it('markdown export returns .md file with entry content', async () => {
+    const agent = await createAuthenticatedAgent();
+    await agent.post('/api/entries').send({ content: 'Markdown export test entry', title: 'Test Title' });
+
+    const res = await agent.get('/api/export/markdown');
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/text\/markdown/);
+    expect(res.headers['content-disposition']).toMatch(/\.md/);
+    expect(res.text).toContain('Markdown export test entry');
+    expect(res.text).toContain('Test Title');
+  });
+
+  it('pdf export returns binary with application/pdf', async () => {
+    const agent = await createAuthenticatedAgent();
+    await agent.post('/api/entries').send({ content: 'PDF export test entry', title: 'PDF Test' });
+
+    const res = await agent.get('/api/export/pdf');
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/pdf/);
+    expect(res.headers['content-disposition']).toMatch(/\.pdf/);
+  });
+
+  it('single entry export by ID works', async () => {
+    const agent = await createAuthenticatedAgent();
+    const createRes = await agent.post('/api/entries').send({ content: 'Single entry export', title: 'Solo' });
+    const entryId = createRes.body.entry.id;
+
+    const res = await agent.get(`/api/export/markdown?scope=entry&id=${entryId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('Single entry export');
+    expect(res.text).toContain('Solo');
+  });
+
+  it('date range filtering works', async () => {
+    const agent = await createAuthenticatedAgent();
+    await agent.post('/api/entries').send({ content: 'In range entry' });
+
+    const now = new Date();
+    const start = new Date(now - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const end = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const res = await agent.get(`/api/export/markdown?scope=range&start=${start}&end=${end}`);
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('In range entry');
+  });
+
+  it('AI summary generation returns structured JSON', async () => {
+    setGroqChat(async () => JSON.stringify({
+      overview: 'A productive week of coding.',
+      themes: ['backend', 'debugging'],
+      moodJourney: 'Started anxious, ended confident.',
+      growthNarrative: 'Significant growth in debugging skills.',
+      notableEntries: ['Fixed major production bug']
+    }));
+
+    const agent = await createAuthenticatedAgent();
+    await agent.post('/api/entries').send({ content: 'Fixed a production bug today' });
+
+    const res = await agent.post('/api/export/summary').send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.summary.overview).toBeDefined();
+    expect(res.body.summary.themes).toBeDefined();
+    expect(res.body.entryCount).toBe(1);
+  });
+
+  it('returns 404 for nonexistent entry ID', async () => {
+    const agent = await createAuthenticatedAgent();
+
+    const res = await agent.get('/api/export/markdown?scope=entry&id=nonexistent');
+
+    expect(res.status).toBe(404);
   });
 });

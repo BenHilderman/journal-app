@@ -8,6 +8,7 @@ import bcrypt from 'bcryptjs';
 import Groq from 'groq-sdk';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import PDFDocument from 'pdfkit';
 import {
   getPool, initDB,
   findUserByEmail, createUser, findUserById, setUserApiKey, getUserApiKey,
@@ -1028,6 +1029,205 @@ app.post('/api/time-capsule', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('Time capsule error:', error);
     res.status(500).json({ error: 'Time capsule failed' });
+  }
+});
+
+// export — shared markdown formatter
+
+function formatEntryToMarkdown(entry) {
+  const date = new Date(entry.created_at).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  let md = `## ${entry.title || 'Untitled Entry'}\n`;
+  md += `**Date:** ${date}`;
+  if (entry.mood) md += ` | **Mood:** ${entry.mood}`;
+  if (entry.tags && entry.tags.length) md += ` | **Tags:** ${entry.tags.join(', ')}`;
+  md += '\n\n';
+  md += entry.content + '\n';
+  if (entry.summary) md += `\n> **AI Summary:** ${entry.summary}\n`;
+  md += '\n---\n\n';
+  return md;
+}
+
+// export — fetch entries by scope helper
+
+async function getExportEntries(userId, scope, { start, end, id } = {}) {
+  if (scope === 'entry' && id) {
+    const entry = await dbGetEntryById(userId, id);
+    return entry ? [entry] : null;
+  }
+  if (scope === 'range' && start && end) {
+    return getEntriesInDateRange(userId, new Date(start), new Date(end));
+  }
+  return dbGetEntries(userId);
+}
+
+// POST /api/export/summary — AI summary for a custom date range
+
+app.post('/api/export/summary', requireAuth, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.body;
+    let entries;
+    if (startDate && endDate) {
+      entries = await getEntriesInDateRange(req.authUserId, new Date(startDate), new Date(endDate));
+    } else {
+      entries = await dbGetEntries(req.authUserId);
+    }
+
+    if (!entries || entries.length === 0) {
+      return res.json({ summary: { overview: 'No entries found for the selected period.', themes: [], moodJourney: '', growthNarrative: '', notableEntries: [] } });
+    }
+
+    const context = entries.map(e => formatEntryToMarkdown(e)).join('');
+
+    const apiKey = await resolveApiKey(req.authUserId);
+    const systemPrompt = `You are a personal growth journal analyst. Summarize the following journal entries into a structured report. Return JSON only:
+{
+  "overview": "3-5 sentence overview of the period",
+  "themes": ["key theme 1", "key theme 2", "key theme 3"],
+  "moodJourney": "2-3 sentences describing the emotional arc",
+  "growthNarrative": "2-3 sentences about personal growth observed",
+  "notableEntries": ["brief description of standout entry 1", "brief description of standout entry 2"]
+}`;
+
+    const response = await groqChat([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: context }
+    ], { temperature: 0.5, max_tokens: 1024, _apiKey: apiKey });
+
+    const summary = safeParseJson(response);
+    if (!summary) {
+      return res.status(500).json({ error: 'Failed to generate summary' });
+    }
+
+    res.json({ summary, entryCount: entries.length });
+  } catch (error) {
+    console.error('Export summary error:', error);
+    res.status(500).json({ error: 'Summary generation failed' });
+  }
+});
+
+// GET /api/export/markdown — download entries as .md
+
+app.get('/api/export/markdown', requireAuth, async (req, res) => {
+  try {
+    const { scope = 'all', start, end, id, includeSummary } = req.query;
+    const entries = await getExportEntries(req.authUserId, scope, { start, end, id });
+
+    if (!entries || entries.length === 0) {
+      return res.status(404).json({ error: 'No entries found' });
+    }
+
+    const user = await findUserById(req.authUserId);
+    const now = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    let md = `---\ntitle: ClearMindAI Journal Export\nauthor: ${user?.name || 'Journal User'}\ndate: ${now}\nentries: ${entries.length}\n---\n\n`;
+    md += `# ClearMindAI Journal Export\n\n`;
+
+    if (includeSummary === 'true' && entries.length > 1) {
+      try {
+        const context = entries.map(e => formatEntryToMarkdown(e)).join('');
+        const apiKey = await resolveApiKey(req.authUserId);
+        const summaryResponse = await groqChat([
+          { role: 'system', content: 'Summarize these journal entries in 3-5 sentences. Return plain text, no JSON.' },
+          { role: 'user', content: context }
+        ], { temperature: 0.5, max_tokens: 512, _apiKey: apiKey });
+        md += `## AI Summary\n\n${summaryResponse}\n\n---\n\n`;
+      } catch {
+        // skip summary on error
+      }
+    }
+
+    for (const entry of entries) {
+      md += formatEntryToMarkdown(entry);
+    }
+
+    const filename = scope === 'entry' ? `journal-entry-${id}.md` : `journal-export-${Date.now()}.md`;
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(md);
+  } catch (error) {
+    console.error('Markdown export error:', error);
+    res.status(500).json({ error: 'Markdown export failed' });
+  }
+});
+
+// GET /api/export/pdf — download entries as styled PDF
+
+app.get('/api/export/pdf', requireAuth, async (req, res) => {
+  try {
+    const { scope = 'all', start, end, id, includeSummary } = req.query;
+    const entries = await getExportEntries(req.authUserId, scope, { start, end, id });
+
+    if (!entries || entries.length === 0) {
+      return res.status(404).json({ error: 'No entries found' });
+    }
+
+    const user = await findUserById(req.authUserId);
+    const now = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    const doc = new PDFDocument({ margin: 60, size: 'A4' });
+
+    const filename = scope === 'entry' ? `journal-entry-${id}.pdf` : `journal-export-${Date.now()}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    doc.pipe(res);
+
+    // cover page
+    doc.moveDown(6);
+    doc.fontSize(28).fillColor('#8b6f4e').text('ClearMindAI', { align: 'center' });
+    doc.moveDown(0.5);
+    doc.fontSize(18).fillColor('#1a1612').text('Journal Export', { align: 'center' });
+    doc.moveDown(1);
+    doc.fontSize(12).fillColor('#a89b8e').text(user?.name || 'Journal User', { align: 'center' });
+    doc.text(`${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`, { align: 'center' });
+    doc.text(`Exported ${now}`, { align: 'center' });
+
+    // AI summary page (if requested)
+    if (includeSummary === 'true' && entries.length > 1) {
+      try {
+        const context = entries.map(e => formatEntryToMarkdown(e)).join('');
+        const apiKey = await resolveApiKey(req.authUserId);
+        const summaryText = await groqChat([
+          { role: 'system', content: 'Summarize these journal entries in 3-5 sentences. Return plain text, no JSON.' },
+          { role: 'user', content: context }
+        ], { temperature: 0.5, max_tokens: 512, _apiKey: apiKey });
+
+        doc.addPage();
+        doc.fontSize(16).fillColor('#8b6f4e').text('AI Summary', { underline: true });
+        doc.moveDown(0.5);
+        doc.fontSize(11).fillColor('#1a1612').text(summaryText, { lineGap: 4 });
+      } catch {
+        // skip summary on error
+      }
+    }
+
+    // entry pages
+    for (const entry of entries) {
+      doc.addPage();
+      doc.fontSize(16).fillColor('#8b6f4e').text(entry.title || 'Untitled Entry');
+      doc.moveDown(0.3);
+
+      const date = new Date(entry.created_at).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      let meta = date;
+      if (entry.mood) meta += `  •  ${entry.mood}`;
+      if (entry.tags && entry.tags.length) meta += `  •  ${entry.tags.join(', ')}`;
+      doc.fontSize(9).fillColor('#a89b8e').text(meta);
+      doc.moveDown(0.5);
+
+      doc.fontSize(11).fillColor('#1a1612').text(entry.content, { lineGap: 4 });
+
+      if (entry.summary) {
+        doc.moveDown(0.5);
+        doc.fontSize(10).fillColor('#a89b8e').text(`AI Summary: ${entry.summary}`, { lineGap: 3 });
+      }
+
+      doc.moveDown(1);
+      doc.moveTo(60, doc.y).lineTo(doc.page.width - 60, doc.y).strokeColor('#e0d5c8').stroke();
+    }
+
+    doc.end();
+  } catch (error) {
+    console.error('PDF export error:', error);
+    if (!res.headersSent) res.status(500).json({ error: 'PDF export failed' });
   }
 });
 

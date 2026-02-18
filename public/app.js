@@ -586,6 +586,8 @@ async function loadEntries() {
         <div class="entry-card-actions">
           <button class="btn btn-ghost btn-sm" onclick="editEntry('${e.id}')">Edit</button>
           <button class="btn btn-ghost btn-sm btn-danger" onclick="deleteEntry('${e.id}')">Delete</button>
+          <button class="btn btn-ghost btn-sm" onclick="exportEntry('${e.id}','pdf')" title="Export as PDF">PDF</button>
+          <button class="btn btn-ghost btn-sm" onclick="exportEntry('${e.id}','markdown')" title="Export as Markdown">MD</button>
         </div>
       </div>
     `).join('');
@@ -683,6 +685,8 @@ document.getElementById('generateRecapBtn').addEventListener('click', async () =
       </div>
       ${data.entryCount ? `<p class="recap-meta">Based on ${data.entryCount} entries this week</p>` : ''}
     `;
+    document.getElementById('recapExportPdf').style.display = 'inline-flex';
+    document.getElementById('recapExportMd').style.display = 'inline-flex';
   } catch (err) {
     container.innerHTML = `<p class="empty-state error-text">Recap failed: ${err.message}</p>`;
   }
@@ -1573,6 +1577,67 @@ function setMoodOrbs(mood) {
     }
   });
 })();
+
+// export — trigger file download for PDF or Markdown
+
+function triggerExport(format, scope, options = {}) {
+  const params = new URLSearchParams({ scope });
+  if (options.start) params.set('start', options.start);
+  if (options.end) params.set('end', options.end);
+  if (options.id) params.set('id', options.id);
+  if (options.includeSummary) params.set('includeSummary', 'true');
+
+  const url = `/api/export/${format}?${params.toString()}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function getExportToolbarOptions() {
+  const start = document.getElementById('exportStartDate').value;
+  const end = document.getElementById('exportEndDate').value;
+  const includeSummary = document.getElementById('exportIncludeSummary').checked;
+  const scope = (start && end) ? 'range' : 'all';
+  return { scope, start, end, includeSummary };
+}
+
+document.getElementById('exportPdfBtn').addEventListener('click', () => {
+  const { scope, start, end, includeSummary } = getExportToolbarOptions();
+  triggerExport('pdf', scope, { start, end, includeSummary });
+});
+
+document.getElementById('exportMdBtn').addEventListener('click', () => {
+  const { scope, start, end, includeSummary } = getExportToolbarOptions();
+  triggerExport('markdown', scope, { start, end, includeSummary });
+});
+
+window.exportEntry = function(id, format) {
+  triggerExport(format, 'entry', { id });
+};
+
+// recap export buttons
+document.getElementById('recapExportPdf').addEventListener('click', () => {
+  const now = new Date();
+  const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+  triggerExport('pdf', 'range', {
+    start: weekAgo.toISOString().split('T')[0],
+    end: now.toISOString().split('T')[0],
+    includeSummary: true
+  });
+});
+
+document.getElementById('recapExportMd').addEventListener('click', () => {
+  const now = new Date();
+  const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+  triggerExport('markdown', 'range', {
+    start: weekAgo.toISOString().split('T')[0],
+    end: now.toISOString().split('T')[0],
+    includeSummary: true
+  });
+});
 
 // time capsule — compare past you vs present you
 

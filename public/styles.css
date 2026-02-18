@@ -3379,3 +3379,77 @@ body::after {
 }
 
 /* capsule mobile handled in main 768px block above */
+
+/* export toolbar */
+
+.export-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.export-dates {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.export-label {
+  font-size: 0.8rem;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.export-date-input {
+  padding: 4px 8px;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-1);
+  font-family: 'Inter', sans-serif;
+  accent-color: var(--brown);
+}
+
+.export-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.export-checkbox input[type="checkbox"] {
+  accent-color: var(--brown);
+}
+
+.export-buttons {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+@media (max-width: 600px) {
+  .export-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .export-dates {
+    flex-wrap: wrap;
+  }
+
+  .export-buttons {
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+}
