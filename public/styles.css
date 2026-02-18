@@ -3453,3 +3453,107 @@ body::after {
     justify-content: flex-end;
   }
 }
+
+/* --- Google ADK integration styles --- */
+
+/* auth screen badge */
+.powered-by {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 0.7rem;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.powered-badge {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.adk-badge {
+  color: #4285f4;
+  font-weight: 700;
+  background: rgba(66, 133, 244, 0.08);
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(66, 133, 244, 0.15);
+}
+
+/* header ADK indicator */
+.adk-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.7rem;
+  color: var(--text-3);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  background: var(--brown-light);
+  padding: 4px 10px;
+  border-radius: 12px;
+  margin-right: 6px;
+}
+
+.adk-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+
+.adk-dot.active {
+  background: #34a853;
+  box-shadow: 0 0 6px rgba(52, 168, 83, 0.5);
+}
+
+/* agent attribution label on AI results */
+.agent-label {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--text-3);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+/* provider toggle in settings modal */
+.provider-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 12px;
+  background: var(--brown-light);
+  border-radius: var(--radius-xs);
+  padding: 3px;
+}
+
+.provider-option {
+  flex: 1;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: calc(var(--radius-xs) - 2px);
+  transition: all 0.2s var(--ease);
+  font-family: var(--font);
+}
+
+.provider-option.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.provider-option:hover:not(.active) {
+  color: var(--text);
+}

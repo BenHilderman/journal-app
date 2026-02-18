@@ -1,17 +1,42 @@
 # ClearMindAI
 
-AI-powered developer growth journal. Write about your day, get insights back.
+AI-powered growth journal built on **Google Agent Development Kit (ADK)**.
 
-Built with Express.js, vanilla JS, and the Groq API. No frontend frameworks, no database server, no build step.
+Write about your day, get insights back — powered by specialized AI agents that analyze mood, track growth, and coach you through reflection.
+
+## Agent Architecture
+
+ClearMindAI uses Google ADK to orchestrate 6 specialized AI agents:
+
+| Agent | Purpose | Tools |
+|-------|---------|-------|
+| Mood Analyst | Detects mood, tags, summary, encouragement | — |
+| Clarity Coach | Reflection + 3 clarifying questions | — |
+| Reflector | RAG-powered pattern detection + growth tracking | search-entries, find-related |
+| Recap Writer | Weekly summary generation | get-entries |
+| Growth Analyst | Long-term trend analysis | get-entries |
+| Coach | Interactive multi-turn coaching | get-entries, find-related |
+
+```
+Browser → Express Routes → ADK Runner → Agent Pipeline → LLM (Groq or Gemini)
+                                              ↓
+                                         ADK Tools (search entries, get history, find related)
+```
+
+## LLM Providers
+
+Supports **Groq** (Llama 3.1, free tier) and **Google Gemini**. Switch providers in-app via the settings modal.
 
 ## Tech
 
 | | |
 |---|---|
+| Agent Framework | Google ADK (`@google/adk`) |
 | Backend | Express.js |
 | Frontend | Vanilla JS, no build step |
-| AI | Groq API (free tier) |
-| Storage | JSON files on disk |
+| AI (default) | Groq API (Llama 3.1, free tier) |
+| AI (optional) | Google Gemini |
+| Storage | PostgreSQL |
 | Auth | bcryptjs + express-session |
 | Search | Character trigram vectors (384-dim) + cosine similarity |
 | Tests | Vitest + Supertest |
@@ -21,19 +46,18 @@ Built with Express.js, vanilla JS, and the Groq API. No frontend frameworks, no 
 
 ```
 Browser
-  ├── /api/entries         → reads/writes JSON files
-  ├── /api/analyze         → sends entry to Groq, gets mood + tags + summary
-  ├── /api/clarity         → Groq generates reflection questions
-  ├── /api/search          → trigram embeddings → cosine similarity ranking
-  ├── /api/reflect         → finds related past entries, sends context to Groq
-  ├── /api/recap           → last 7 days of entries → Groq summary
-  ├── /api/insights/mood-trends      → aggregates mood data from analyzed entries
-  └── /api/insights/growth-patterns  → full journal history → Groq analysis
+  ├── /api/entries                    → PostgreSQL CRUD
+  ├── /api/analyze                    → ADK Mood Analyst Agent
+  ├── /api/clarity                    → ADK Clarity Coach Agent
+  ├── /api/search                     → trigram embeddings → cosine similarity
+  ├── /api/reflect                    → ADK Reflector Agent (RAG)
+  ├── /api/recap                      → ADK Recap Writer Agent
+  ├── /api/insights/mood-trends       → aggregates mood data
+  ├── /api/insights/growth-patterns   → ADK Growth Analyst Agent
+  ├── /api/coach                      → ADK Coach Agent (multi-turn)
+  ├── /api/agents/status              → ADK agent registry info
+  └── /api/settings/llm-provider      → switch between Groq / Gemini
 ```
-
-The search doesn't use any ML model — it builds character trigram frequency vectors and compares them with cosine similarity. It's surprisingly decent for journal-length text.
-
-The mood chart is just inline SVG. Pulling in Chart.js for one line chart felt like overkill.
 
 ## Setup
 
@@ -56,20 +80,33 @@ npm test          # run once
 npm run test:watch  # watch mode
 ```
 
-26 tests covering auth, entry CRUD, AI endpoints (mocked), search, and insights. No API key needed — all LLM calls are stubbed out in tests.
+26 tests covering auth, entry CRUD, AI endpoints (mocked), search, and insights.
 
 ## Project structure
 
 ```
 ClearMindAI/
-├── server.js          # everything — routes, auth, AI calls, storage
+├── agents/                # Google ADK agent definitions
+│   ├── index.js           # ADK runner, session service, agent registry
+│   ├── models.js          # LLM provider abstraction (Groq ↔ Gemini)
+│   ├── mood-analyst.js    # Mood analysis agent
+│   ├── clarity-coach.js   # Clarity + questions agent
+│   ├── reflector.js       # RAG-powered reflection agent
+│   ├── recap-writer.js    # Weekly recap agent
+│   ├── growth-analyst.js  # Growth pattern agent
+│   ├── coach.js           # Multi-turn coaching agent
+│   └── tools/
+│       ├── search-entries.js  # Semantic search tool
+│       ├── get-entries.js     # Entry fetching tool
+│       └── find-related.js   # Related entries tool
+├── server.js              # Express routes, auth, ADK integration
+├── utils.js               # Shared utilities (embeddings, JSON parsing)
+├── db.js                  # PostgreSQL schema + helpers
 ├── public/
-│   ├── index.html     # SPA shell
-│   ├── app.js         # frontend logic, SVG charts
-│   └── styles.css     # dark theme
+│   ├── index.html         # SPA shell
+│   ├── app.js             # Frontend logic, SVG charts
+│   └── styles.css         # Beige theme
 ├── tests/
 │   └── server.test.js
 └── .github/workflows/ci.yml
 ```
-
-Yeah, the whole backend is one file. The app is small enough that splitting it into controllers/models/services would just add indirection without helping readability.

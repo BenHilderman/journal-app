@@ -27,8 +27,9 @@ export async function initDB() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
-  // Additive migration for existing databases
+  // Additive migrations for existing databases
   await p.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS azure_oid TEXT UNIQUE`).catch(() => {});
+  await p.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS llm_provider TEXT DEFAULT 'groq'`).catch(() => {});
   await p.query(`
     CREATE TABLE IF NOT EXISTS entries (
       id TEXT PRIMARY KEY,
@@ -95,6 +96,20 @@ export async function getUserApiKey(userId) {
     'SELECT api_key FROM users WHERE id = $1', [userId]
   );
   return rows[0]?.api_key || null;
+}
+
+export async function getUserLlmProvider(userId) {
+  const { rows } = await getPool().query(
+    'SELECT llm_provider FROM users WHERE id = $1', [userId]
+  );
+  return rows[0]?.llm_provider || 'groq';
+}
+
+export async function setUserLlmProvider(userId, provider) {
+  await getPool().query(
+    'UPDATE users SET llm_provider = $1 WHERE id = $2',
+    [provider, userId]
+  );
 }
 
 // --- Entries ---

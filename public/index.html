@@ -38,6 +38,10 @@
           </div>
           <h1>ClearMind<span class="logo-ai">AI</span></h1>
           <p class="tagline">Your thoughts, clarified.</p>
+          <div class="powered-by">
+            <span class="powered-badge">Powered by</span>
+            <span class="adk-badge">Google ADK</span>
+          </div>
         </div>
         <div class="typing-demo" id="typingDemo"></div>
         <form id="authForm" class="auth-form">
@@ -67,6 +71,9 @@
           <span class="header-title">ClearMind<span class="logo-ai">AI</span></span>
         </div>
         <div class="header-right">
+          <span id="adkIndicator" class="adk-indicator">
+            <span class="adk-dot"></span> ADK · <span id="adkProviderLabel">Groq</span>
+          </span>
           <span id="userName" class="header-user-name"></span>
           <button id="coachToggle" class="btn btn-ghost btn-sm coach-toggle" title="AI Coach">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -299,14 +306,18 @@
     </div>
   </div>
 
-  <!-- API key setup modal — pops up when user clicks "Set up" or header button -->
+  <!-- AI provider setup modal -->
   <div id="apiKeyOverlay" class="api-overlay" style="display:none;">
     <div class="api-modal">
       <div class="api-modal-header">
-        <h3>Connect to Groq</h3>
+        <h3>Connect AI Provider</h3>
         <button id="apiModalClose" class="btn btn-ghost btn-sm">✕</button>
       </div>
-      <p class="api-modal-desc">Paste a free API key from <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">console.groq.com/keys</a> to enable AI features.</p>
+      <div class="provider-toggle">
+        <button class="provider-option active" data-provider="groq">Groq</button>
+        <button class="provider-option" data-provider="gemini">Gemini</button>
+      </div>
+      <p class="api-modal-desc" id="providerDesc">Paste a free API key from <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">console.groq.com/keys</a> to enable AI features.</p>
       <div class="api-modal-form">
         <input type="password" id="apiKeyInput" placeholder="gsk_..." class="api-key-input">
         <button id="apiKeySaveBtn" class="btn btn-primary">Save Key</button>

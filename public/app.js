@@ -2,6 +2,7 @@ const API = '';
 let currentUser = null;
 let currentView = 'journal';
 let currentEntryId = null;
+let currentProvider = 'groq';
 
 // handles streaming responses from the server (SSE)
 
@@ -339,7 +340,7 @@ function requireApiKey() {
   return true;
 }
 
-// api key setup modal
+// ai provider setup modal
 (function initApiKeySetup() {
   const overlay = document.getElementById('apiKeyOverlay');
   const input = document.getElementById('apiKeyInput');
@@ -348,13 +349,38 @@ function requireApiKey() {
   const closeBtn = document.getElementById('apiModalClose');
   const errorEl = document.getElementById('apiKeyError');
   const headerBtn = document.getElementById('apiKeyHeaderBtn');
+  const providerDesc = document.getElementById('providerDesc');
   if (!overlay) return;
+
+  let selectedProvider = 'groq';
+
+  // provider toggle buttons
+  overlay.querySelectorAll('.provider-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedProvider = btn.dataset.provider;
+      overlay.querySelectorAll('.provider-option').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (selectedProvider === 'gemini') {
+        providerDesc.innerHTML = 'Paste an API key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a> to use Gemini.';
+        input.placeholder = 'AIza...';
+      } else {
+        providerDesc.innerHTML = 'Paste a free API key from <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">console.groq.com/keys</a> to enable AI features.';
+        input.placeholder = 'gsk_...';
+      }
+    });
+  });
 
   async function checkApiKey() {
     try {
-      const res = await fetch('/api/settings/has-key');
-      const data = await res.json();
-      hasApiKey = !!data.hasKey;
+      const [keyRes, providerRes] = await Promise.all([
+        fetch('/api/settings/has-key'),
+        fetch('/api/settings/llm-provider'),
+      ]);
+      const keyData = await keyRes.json();
+      const providerData = await providerRes.json();
+      hasApiKey = !!keyData.hasKey;
+      currentProvider = providerData.provider || 'groq';
+      updateProviderBadge();
     } catch {
       hasApiKey = false;
     }
@@ -369,18 +395,20 @@ function requireApiKey() {
     saveBtn.disabled = true;
 
     try {
-      const res = await fetch('/api/settings/api-key', {
+      const res = await fetch('/api/settings/llm-provider', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: key })
+        body: JSON.stringify({ provider: selectedProvider, apiKey: key })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
       hasApiKey = true;
+      currentProvider = selectedProvider;
       updateAIButtonStates();
+      updateProviderBadge();
       closeApiKeyModal();
-      showNotification('API key saved — AI features are now active!');
+      showNotification(`Connected to ${selectedProvider === 'gemini' ? 'Gemini' : 'Groq'} — AI features are now active!`);
     } catch (err) {
       errorEl.textContent = err.message;
     } finally {
@@ -397,18 +425,28 @@ function requireApiKey() {
     closeApiKeyModal();
   });
 
-  // clicking the header "API Key" button opens the modal
   if (headerBtn) {
     headerBtn.addEventListener('click', openApiKeyModal);
   }
 
-  // clicking overlay background closes the modal
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closeApiKeyModal();
   });
 
   window._checkApiKey = checkApiKey;
 })();
+
+// updates the ADK provider badge in the header
+function updateProviderBadge() {
+  const label = document.getElementById('adkProviderLabel');
+  if (label) {
+    label.textContent = currentProvider === 'gemini' ? 'Gemini' : 'Groq';
+  }
+  const dot = document.querySelector('.adk-dot');
+  if (dot) {
+    dot.classList.toggle('active', hasApiKey);
+  }
+}
 
 // check if already logged in on page load
 (async () => {
@@ -479,7 +517,9 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
   const stream = showStreamingResult();
   fetchStream('/api/stream/analyze', { content, entryId: currentEntryId }, {
     onToken(token) { stream.append(token); },
-    onParsed(a) {
+    onParsed(data) {
+      const a = data.parsed || data;
+      const agentName = data.agent || 'Mood Analyst';
       setMoodOrbs(a.mood);
       stream.finalize(`
         <div class="analysis-card">
@@ -487,6 +527,7 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
           <div class="analysis-tags">${(a.tags || []).map(t => `<span class="tag">${t}</span>`).join('')}</div>
           <div class="analysis-summary"><strong>Summary:</strong> ${a.summary}</div>
           <div class="analysis-encouragement">${a.encouragement}</div>
+          <div class="agent-label">via ${agentName} Agent</div>
         </div>
       `);
     },
@@ -502,7 +543,9 @@ document.getElementById('clarityBtn').addEventListener('click', async () => {
   const stream = showStreamingResult();
   fetchStream('/api/stream/clarity', { content }, {
     onToken(token) { stream.append(token); },
-    onParsed(c) {
+    onParsed(data) {
+      const c = data.parsed || data;
+      const agentName = data.agent || 'Clarity Coach';
       stream.finalize(`
         <div class="clarity-card">
           <div class="clarity-reflection"><strong>Reflection:</strong> ${c.reflection}</div>
@@ -510,6 +553,7 @@ document.getElementById('clarityBtn').addEventListener('click', async () => {
             <strong>Questions to explore:</strong>
             <ol>${(c.questions || []).map(q => `<li>${q}</li>`).join('')}</ol>
           </div>
+          <div class="agent-label">via ${agentName} Agent</div>
         </div>
       `);
     },
@@ -527,8 +571,9 @@ document.getElementById('reflectBtn').addEventListener('click', async () => {
   fetchStream('/api/stream/reflect', { content }, {
     onToken(token) { stream.append(token); },
     onParsed(data) {
-      const r = data.reflection || data;
-      relatedCount = data.relatedEntries || 0;
+      const r = data.parsed?.reflection || data.parsed || data.reflection || data;
+      relatedCount = data.relatedEntries || data.parsed?.relatedEntries || 0;
+      const agentName = data.agent || data.parsed?.agent || 'Reflector';
       stream.finalize(`
         <div class="reflect-card">
           <div class="reflect-text"><strong>Reflection:</strong> ${r.reflection}</div>
@@ -538,6 +583,7 @@ document.getElementById('reflectBtn').addEventListener('click', async () => {
           </div>
           <div class="reflect-growth"><strong>Growth:</strong> ${r.growth}</div>
           <div class="reflect-meta">Based on ${relatedCount} related entries</div>
+          <div class="agent-label">via ${agentName} Agent</div>
         </div>
       `);
     },

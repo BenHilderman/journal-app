@@ -13,12 +13,17 @@
     "ai",
     "journal",
     "personal-growth",
+    "google-adk",
     "groq",
-    "llm"
+    "gemini",
+    "llm",
+    "agents"
   ],
   "license": "MIT",
   "dependencies": {
     "@azure/msal-node": "^2.16.0",
+    "@google/adk": "^0.3.0",
+    "@google/generative-ai": "^0.21.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "bcryptjs": "^2.4.3",
     "connect-pg-simple": "^10.0.0",

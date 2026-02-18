@@ -12,12 +12,24 @@ import PDFDocument from 'pdfkit';
 import {
   getPool, initDB,
   findUserByEmail, createUser, findUserById, setUserApiKey, getUserApiKey,
+  getUserLlmProvider, setUserLlmProvider,
   createEntry as dbCreateEntry, getEntries as dbGetEntries, getEntryById as dbGetEntryById,
   updateEntry as dbUpdateEntry, deleteEntry as dbDeleteEntry,
   getEntriesWithEmbeddings, getEntriesInDateRange, getAnalyzedEntries,
   updateEntryAnalysis,
   findUserByAzureOid, createUserFromAzure,
 } from './db.js';
+import { runAgent, streamAgent, getAgentStatus, AGENT_LABELS } from './agents/index.js';
+import {
+  getEmbedding as _getEmbedding,
+  cosineSimilarity as _cosineSimilarity,
+  safeParseJson as _safeParseJson,
+} from './utils.js';
+
+// Re-export for backward compatibility (used by tests)
+export const getEmbedding = _getEmbedding;
+export const cosineSimilarity = _cosineSimilarity;
+export const safeParseJson = _safeParseJson;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,6 +86,13 @@ export async function* groqChatStream(messages, options = {}) {
 async function resolveApiKey(userId) {
   const userKey = await getUserApiKey(userId);
   return userKey || process.env.GROQ_API_KEY || '';
+}
+
+// resolves the full AI config for the current request (provider + API key)
+async function resolveAIConfig(userId) {
+  const provider = await getUserLlmProvider(userId);
+  const apiKey = await resolveApiKey(userId);
+  return { provider, apiKey };
 }
 
 // sets up server-sent events for real-time streaming
@@ -146,71 +165,7 @@ async function resolveAzureUserToLocal(azureUser) {
   return user.id;
 }
 
-/*
- * Poor man's text embeddings — we hash character trigrams into a fixed-size
- * vector so we can do similarity search without calling an external API.
- * Not as smart as real embeddings but works surprisingly well for journals.
- */
-export function getEmbedding(text) {
-  const normalized = text.toLowerCase().replace(/[^a-z0-9 ]/g, '');
-  const dim = 384;
-  const vector = new Array(dim).fill(0);
-
-  for (let i = 0; i < normalized.length - 2; i++) {
-    const trigram = normalized.substring(i, i + 3);
-    let hash = 0;
-    for (let j = 0; j < trigram.length; j++) {
-      hash = ((hash << 5) - hash + trigram.charCodeAt(j)) | 0;
-    }
-    const index = Math.abs(hash) % dim;
-    vector[index] += 1;
-  }
-
-  const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0));
-  if (magnitude > 0) {
-    for (let i = 0; i < dim; i++) {
-      vector[i] /= magnitude;
-    }
-  }
-
-  return vector;
-}
-
-export function cosineSimilarity(a, b) {
-  if (a.length !== b.length) return 0;
-  let dot = 0, magA = 0, magB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
-}
-
-// LLMs love wrapping JSON in markdown fences, so we handle that
-export function safeParseJson(text) {
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    // try markdown code block
-    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-      try { return JSON.parse(jsonMatch[1].trim()); } catch {}
-    }
-    // try bare object
-    const objMatch = text.match(/\{[\s\S]*\}/);
-    if (objMatch) {
-      try { return JSON.parse(objMatch[0]); } catch {}
-    }
-    // try bare array
-    const arrMatch = text.match(/\[[\s\S]*\]/);
-    if (arrMatch) {
-      try { return JSON.parse(arrMatch[0]); } catch {}
-    }
-    return null;
-  }
-}
+// getEmbedding, cosineSimilarity, safeParseJson — see utils.js
 
 export async function groqChat(messages, options = {}) {
   return _groqChat(messages, options);
@@ -387,19 +342,10 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
     const { content, entryId } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const apiKey = await resolveApiKey(req.authUserId);
-    const systemPrompt = `You are a personal growth journal analyst. Analyze this journal entry from a university student or recent graduate. Return JSON only:
-{
-  "mood": "one word mood (e.g. excited, frustrated, focused, anxious, confident, neutral)",
-  "tags": ["3-5 relevant tags like academics, career, relationships, wellness, personal growth"],
-  "summary": "2-3 sentence summary of the key points",
-  "encouragement": "A brief encouraging note specific to what they wrote about"
-}`;
-
-    const response = await groqChat([
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content }
-    ], { _apiKey: apiKey });
+    const { provider, apiKey } = await resolveAIConfig(req.authUserId);
+    const response = await runAgent('mood_analyst', content, {
+      userId: req.authUserId, apiKey, provider,
+    });
 
     const analysis = safeParseJson(response);
     if (!analysis) {
@@ -415,7 +361,7 @@ app.post('/api/analyze', requireAuth, async (req, res) => {
       });
     }
 
-    res.json({ analysis });
+    res.json({ analysis, agent: 'Mood Analyst' });
   } catch (error) {
     console.error('Analysis error:', error);
     res.status(500).json({ error: 'Analysis failed' });
@@ -427,24 +373,17 @@ app.post('/api/clarity', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const apiKey = await resolveApiKey(req.authUserId);
-    const systemPrompt = `You are a thoughtful personal growth coach. Based on this journal entry, provide a brief reflection and 3 clarifying questions to help the writer think deeper. Return JSON only:
-{
-  "reflection": "A 2-3 sentence thoughtful reflection on what they wrote",
-  "questions": ["question 1", "question 2", "question 3"]
-}`;
-
-    const response = await groqChat([
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content }
-    ], { _apiKey: apiKey });
+    const { provider, apiKey } = await resolveAIConfig(req.authUserId);
+    const response = await runAgent('clarity_coach', content, {
+      userId: req.authUserId, apiKey, provider,
+    });
 
     const clarity = safeParseJson(response);
     if (!clarity) {
       return res.status(500).json({ error: 'Failed to parse clarity response' });
     }
 
-    res.json({ clarity });
+    res.json({ clarity, agent: 'Clarity Coach' });
   } catch (error) {
     console.error('Clarity error:', error);
     res.status(500).json({ error: 'Clarity analysis failed' });
@@ -489,15 +428,14 @@ app.post('/api/reflect', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
+    // Build RAG context (keep for context count) + delegate to ADK agent
     const entries = await getEntriesWithEmbeddings(req.authUserId);
     const queryEmbedding = getEmbedding(content);
 
-    // grab the 5 most similar past entries for context
     const related = entries
       .map(entry => ({
         content: entry.content,
         mood: entry.mood,
-        tags: entry.tags,
         date: entry.created_at,
         similarity: cosineSimilarity(queryEmbedding, entry.embedding)
       }))
@@ -509,18 +447,10 @@ app.post('/api/reflect', requireAuth, async (req, res) => {
       ? `\n\nRelated past entries:\n${related.map((r, i) => `[${i + 1}] (${new Date(r.date).toLocaleDateString()}, mood: ${r.mood || 'unknown'}): ${r.content.substring(0, 300)}`).join('\n')}`
       : '';
 
-    const apiKey = await resolveApiKey(req.authUserId);
-    const systemPrompt = `You are a personal growth coach with access to the writer's journal history. Based on their current entry and related past entries, provide a reflection that connects patterns and tracks growth. Return JSON only:
-{
-  "reflection": "A thoughtful 3-4 sentence reflection connecting current entry to past patterns",
-  "patterns": ["pattern 1 you noticed", "pattern 2"],
-  "growth": "One specific area where you see growth compared to earlier entries"
-}`;
-
-    const response = await groqChat([
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: `Current entry: ${content}${contextStr}` }
-    ], { temperature: 0.5, _apiKey: apiKey });
+    const { provider, apiKey } = await resolveAIConfig(req.authUserId);
+    const response = await runAgent('reflector', `Current entry: ${content}${contextStr}`, {
+      userId: req.authUserId, apiKey, provider,
+    });
 
     const reflection = safeParseJson(response);
     if (!reflection) {
@@ -529,7 +459,8 @@ app.post('/api/reflect', requireAuth, async (req, res) => {
 
     res.json({
       reflection,
-      relatedEntries: related.length
+      relatedEntries: related.length,
+      agent: 'Reflector',
     });
   } catch (error) {
     console.error('Reflect error:', error);
@@ -552,27 +483,17 @@ app.get('/api/recap', requireAuth, async (req, res) => {
       `[${new Date(e.created_at).toLocaleDateString()}] ${e.summary || e.content.substring(0, 200)}`
     ).join('\n');
 
-    const apiKey = await resolveApiKey(req.authUserId);
-    const systemPrompt = `You are a personal growth coach. Summarize this person's week based on their journal entries. Return JSON only:
-{
-  "summary": "3-4 sentence overview of their week",
-  "highlights": ["highlight 1", "highlight 2", "highlight 3"],
-  "mood": "overall mood for the week",
-  "focusAreas": ["what they focused on most"],
-  "suggestion": "one thing to focus on next week"
-}`;
-
-    const response = await groqChat([
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: `This week's entries:\n${entrySummaries}` }
-    ], { temperature: 0.5, _apiKey: apiKey });
+    const { provider, apiKey } = await resolveAIConfig(req.authUserId);
+    const response = await runAgent('recap_writer', `This week's entries:\n${entrySummaries}`, {
+      userId: req.authUserId, apiKey, provider,
+    });
 
     const recap = safeParseJson(response);
     if (!recap) {
       return res.status(500).json({ error: 'Failed to generate recap' });
     }
 
-    res.json({ recap, entryCount: weekEntries.length });
+    res.json({ recap, entryCount: weekEntries.length, agent: 'Recap Writer' });
   } catch (error) {
     console.error('Recap error:', error);
     res.status(500).json({ error: 'Recap failed' });
@@ -630,29 +551,17 @@ app.post('/api/insights/growth-patterns', requireAuth, async (req, res) => {
       `[${new Date(e.created_at).toLocaleDateString()}] mood: ${e.mood || 'unknown'}, tags: ${(e.tags || []).join(', ')}, summary: ${e.summary || e.content.substring(0, 200)}`
     ).join('\n');
 
-    const apiKey = await resolveApiKey(req.authUserId);
-    const systemPrompt = `You are a personal growth analyst. Analyze all of this person's journal entries to identify long-term patterns. Return JSON only:
-{
-  "growthAreas": ["specific area where the person has grown over time"],
-  "blindSpots": ["recurring theme or issue the person hasn't addressed"],
-  "recurringThemes": ["theme that appears across many entries"],
-  "suggestion": "one specific thing to journal about next based on the patterns you see"
-}
-Provide 2-3 items for each array. Be specific and reference actual patterns from their entries.`;
-
-    const response = await groqChat([
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: `All journal entries:\n${context}` }
-    ], { temperature: 0.7, max_tokens: 1024, _apiKey: apiKey });
-
-    console.log('[growth-patterns] generated for', req.authUserId);
+    const { provider, apiKey } = await resolveAIConfig(req.authUserId);
+    const response = await runAgent('growth_analyst', `All journal entries:\n${context}`, {
+      userId: req.authUserId, apiKey, provider,
+    });
 
     const patterns = safeParseJson(response);
     if (!patterns) {
       return res.status(500).json({ error: 'Failed to parse growth patterns' });
     }
 
-    res.json({ patterns });
+    res.json({ patterns, agent: 'Growth Analyst' });
   } catch (error) {
     console.error('Growth patterns error:', error);
     res.status(500).json({ error: 'Growth pattern analysis failed' });
@@ -666,22 +575,13 @@ app.post('/api/stream/analyze', requireAuth, async (req, res) => {
     const { content, entryId } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const apiKey = await resolveApiKey(req.authUserId);
-    const systemPrompt = `You are a personal growth journal analyst. Analyze this journal entry from a university student or recent graduate. Return JSON only:
-{
-  "mood": "one word mood",
-  "tags": ["3-5 relevant tags"],
-  "summary": "2-3 sentence summary",
-  "encouragement": "A brief encouraging note"
-}`;
-
+    const { provider, apiKey } = await resolveAIConfig(req.authUserId);
     const sse = initSSE(res);
     let full = '';
     try {
-      for await (const token of groqChatStream([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content }
-      ], { _apiKey: apiKey })) {
+      for await (const token of streamAgent('mood_analyst', content, {
+        userId: req.authUserId, apiKey, provider,
+      })) {
         full += token;
         sse.sendToken(token);
       }
@@ -699,7 +599,7 @@ app.post('/api/stream/analyze', requireAuth, async (req, res) => {
           summary: analysis.summary,
         });
       }
-      sse.sendJson({ parsed: analysis });
+      sse.sendJson({ parsed: analysis, agent: 'Mood Analyst' });
     }
     sse.done();
   } catch (error) {
@@ -713,20 +613,13 @@ app.post('/api/stream/clarity', requireAuth, async (req, res) => {
     const { content } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
 
-    const apiKey = await resolveApiKey(req.authUserId);
-    const systemPrompt = `You are a thoughtful personal growth coach. Based on this journal entry, provide a brief reflection and 3 clarifying questions. Return JSON only:
-{
-  "reflection": "A 2-3 sentence thoughtful reflection",
-  "questions": ["question 1", "question 2", "question 3"]
-}`;
-
+    const { provider, apiKey } = await resolveAIConfig(req.authUserId);
     const sse = initSSE(res);
     let full = '';
     try {
-      for await (const token of groqChatStream([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content }
-      ], { _apiKey: apiKey })) {
+      for await (const token of streamAgent('clarity_coach', content, {
+        userId: req.authUserId, apiKey, provider,
+      })) {
         full += token;
         sse.sendToken(token);
       }
@@ -736,7 +629,7 @@ app.post('/api/stream/clarity', requireAuth, async (req, res) => {
     }
 
     const clarity = safeParseJson(full);
-    if (clarity) sse.sendJson({ parsed: clarity });
+    if (clarity) sse.sendJson({ parsed: clarity, agent: 'Clarity Coach' });
     sse.done();
   } catch (error) {
     console.error('Stream clarity error:', error);
@@ -756,7 +649,6 @@ app.post('/api/stream/reflect', requireAuth, async (req, res) => {
       .map(entry => ({
         content: entry.content,
         mood: entry.mood,
-        tags: entry.tags,
         date: entry.created_at,
         similarity: cosineSimilarity(queryEmbedding, entry.embedding)
       }))
@@ -768,21 +660,13 @@ app.post('/api/stream/reflect', requireAuth, async (req, res) => {
       ? `\n\nRelated past entries:\n${related.map((r, i) => `[${i + 1}] (${new Date(r.date).toLocaleDateString()}, mood: ${r.mood || 'unknown'}): ${r.content.substring(0, 300)}`).join('\n')}`
       : '';
 
-    const apiKey = await resolveApiKey(req.authUserId);
-    const systemPrompt = `You are a personal growth coach with access to the writer's journal history. Based on their current entry and related past entries, provide a reflection that connects patterns and tracks growth. Return JSON only:
-{
-  "reflection": "A thoughtful 3-4 sentence reflection",
-  "patterns": ["pattern 1", "pattern 2"],
-  "growth": "One specific area of growth"
-}`;
-
+    const { provider, apiKey } = await resolveAIConfig(req.authUserId);
     const sse = initSSE(res);
     let full = '';
     try {
-      for await (const token of groqChatStream([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Current entry: ${content}${contextStr}` }
-      ], { temperature: 0.5, _apiKey: apiKey })) {
+      for await (const token of streamAgent('reflector', `Current entry: ${content}${contextStr}`, {
+        userId: req.authUserId, apiKey, provider,
+      })) {
         full += token;
         sse.sendToken(token);
       }
@@ -792,7 +676,7 @@ app.post('/api/stream/reflect', requireAuth, async (req, res) => {
     }
 
     const reflection = safeParseJson(full);
-    if (reflection) sse.sendJson({ parsed: reflection, relatedEntries: related.length });
+    if (reflection) sse.sendJson({ parsed: reflection, relatedEntries: related.length, agent: 'Reflector' });
     sse.done();
   } catch (error) {
     console.error('Stream reflect error:', error);
@@ -855,13 +739,15 @@ app.post('/api/coach', requireAuth, async (req, res) => {
     const context = await buildCoachContextWithRAG(req.authUserId, lastUserMsg?.content);
     const trimmed = messages.slice(-20);
 
-    const apiKey = await resolveApiKey(req.authUserId);
-    const response = await groqChat([
-      { role: 'system', content: COACH_SYSTEM(context) },
-      ...trimmed
-    ], { temperature: 0.7, max_tokens: 1024, _apiKey: apiKey });
+    // Build a combined message with context for the ADK agent
+    const contextualMessage = `[Context: ${context}]\n\nConversation:\n${trimmed.map(m => `${m.role}: ${m.content}`).join('\n')}`;
 
-    res.json({ response });
+    const { provider, apiKey } = await resolveAIConfig(req.authUserId);
+    const response = await runAgent('coach', contextualMessage, {
+      userId: req.authUserId, apiKey, provider,
+    });
+
+    res.json({ response, agent: 'Coach' });
   } catch (error) {
     console.error('Coach error:', error);
     res.status(500).json({ error: 'Coach failed' });
@@ -879,14 +765,15 @@ app.post('/api/stream/coach', requireAuth, async (req, res) => {
     const context = await buildCoachContextWithRAG(req.authUserId, lastUserMsg?.content);
     const trimmed = messages.slice(-20);
 
-    const apiKey = await resolveApiKey(req.authUserId);
+    const contextualMessage = `[Context: ${context}]\n\nConversation:\n${trimmed.map(m => `${m.role}: ${m.content}`).join('\n')}`;
+
+    const { provider, apiKey } = await resolveAIConfig(req.authUserId);
     const sse = initSSE(res);
     let full = '';
     try {
-      for await (const token of groqChatStream([
-        { role: 'system', content: COACH_SYSTEM(context) },
-        ...trimmed
-      ], { temperature: 0.7, max_tokens: 1024, _apiKey: apiKey })) {
+      for await (const token of streamAgent('coach', contextualMessage, {
+        userId: req.authUserId, apiKey, provider,
+      })) {
         full += token;
         sse.sendToken(token);
       }
@@ -895,7 +782,7 @@ app.post('/api/stream/coach', requireAuth, async (req, res) => {
       return;
     }
 
-    sse.sendJson({ response: full });
+    sse.sendJson({ response: full, agent: 'Coach' });
     sse.done();
   } catch (error) {
     console.error('Stream coach error:', error);
@@ -1253,6 +1140,35 @@ app.get('/api/settings/has-key', requireAuth, async (req, res) => {
   const envKey = process.env.GROQ_API_KEY || '';
   const hasKey = !!(userKey || envKey);
   res.json({ hasKey });
+});
+
+// llm provider settings
+app.get('/api/settings/llm-provider', requireAuth, async (req, res) => {
+  const provider = await getUserLlmProvider(req.authUserId);
+  res.json({ provider });
+});
+
+app.post('/api/settings/llm-provider', requireAuth, async (req, res) => {
+  try {
+    const { provider, apiKey } = req.body;
+    if (!provider || !['groq', 'gemini'].includes(provider)) {
+      return res.status(400).json({ error: 'Provider must be "groq" or "gemini"' });
+    }
+    await setUserLlmProvider(req.authUserId, provider);
+    if (apiKey) {
+      await setUserApiKey(req.authUserId, apiKey.trim());
+    }
+    res.json({ success: true, provider });
+  } catch (error) {
+    console.error('Set LLM provider error:', error);
+    res.status(500).json({ error: 'Failed to update LLM provider' });
+  }
+});
+
+// adk agents status
+app.get('/api/agents/status', requireAuth, async (req, res) => {
+  const provider = await getUserLlmProvider(req.authUserId);
+  res.json(getAgentStatus(provider));
 });
 
 // --- Microsoft Graph calendar context (feature-flagged) ---
