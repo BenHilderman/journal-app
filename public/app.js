@@ -197,7 +197,7 @@ document.getElementById('signOutBtn').addEventListener('click', async () => {
 // typing effect on login screen
 
 const typingPhrases = [
-  "Had a breakthrough moment today — everything just clicked...",
+  "Had a breakthrough moment today. Everything just clicked...",
   "Feeling grateful for the progress I've made this week...",
   "Tough day, but writing it out helps me see it more clearly...",
   "Set a new goal today. Nervous but excited to start...",
@@ -410,7 +410,7 @@ function requireApiKey() {
       updateAIButtonStates();
       updateProviderBadge();
       closeApiKeyModal();
-      showNotification(`Connected to ${selectedProvider === 'gemini' ? 'Gemini' : 'Groq'} — AI features are now active!`);
+      showNotification(`Connected to ${selectedProvider === 'gemini' ? 'Gemini' : 'Groq'}. AI features are now active!`);
     } catch (err) {
       errorEl.textContent = err.message;
     } finally {
